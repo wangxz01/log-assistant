@@ -1,0 +1,45 @@
+services:
+  api:
+    build: .
+    container_name: log-assistant-api
+    ports:
+      - "8000:8000"
+    environment:
+      APP_NAME: Log Assistant API
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      POSTGRES_DB: log_assistant
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: log-assistant-postgres
+    environment:
+      POSTGRES_DB: log_assistant
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: log-assistant-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+
