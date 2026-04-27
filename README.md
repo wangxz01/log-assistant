@@ -44,12 +44,15 @@ frontend/
 tests/
 assets/
   uploads/
+tools/
+  log_generator/
 ```
 
 - `app/`：FastAPI 后端主应用
 - `frontend/`：Vue 3 + Vite 测试前端
 - `tests/`：后端自动化测试
 - `assets/uploads/`：本地上传日志文件目录，已被 Git 忽略
+- `tools/log_generator/`：批量生成测试日志文件的工具
 - `docker-compose.yml`：本地一键启动 API、前端、PostgreSQL 和 Redis
 
 ## 接口列表
@@ -108,6 +111,24 @@ npm run dev
 ```
 
 前端开发服务器默认运行在 `http://localhost:5173`。开发环境下，前端会请求 `/api`，再由 Vite 代理到 `http://localhost:8000` 上的后端接口。
+
+## 生成测试日志
+
+项目提供了一个不依赖第三方库的日志生成脚本，可用于批量生成前端上传测试文件。
+
+默认生成 5 个日志文件，每个文件 120 行：
+
+```bash
+python tools/log_generator/generate_logs.py
+```
+
+自定义文件数量、行数和输出目录：
+
+```bash
+python tools/log_generator/generate_logs.py --files 10 --lines 300 --output sample_logs
+```
+
+生成目录默认为 `sample_logs/`，该目录已被 Git 忽略。生成的日志包含时间戳、日志级别、服务名、请求 ID、用户 ID、耗时和模拟消息，可直接在前端上传。
 
 ## 备注
 
