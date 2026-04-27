@@ -4,5 +4,6 @@ __pycache__/
 .venv/
 .env
 .codex
+assets/uploads/
 frontend/node_modules/
 frontend/dist/

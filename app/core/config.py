@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
     redis_host: str = "redis"
     redis_port: int = 6379
+    auth_secret_key: str = "change-this-secret-key"
+    access_token_expire_minutes: int = 60
+    upload_dir: str = "assets/uploads"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -28,4 +31,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

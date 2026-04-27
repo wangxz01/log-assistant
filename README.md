@@ -1,6 +1,6 @@
 # Log Assistant
 
-这是一个用于智能日志分析助手的最小全栈脚手架。当前版本刻意保持简单：后端接口返回占位响应，前端用于测试和演示接口调用，PostgreSQL 和 Redis 已加入 Docker Compose，方便后续扩展持久化存储和后台任务。
+这是一个用于智能日志分析助手的最小全栈应用。当前版本已经打通基础主链路：注册/登录、上传日志、保存文件、解析日志、查看列表和详情、按条件筛选。PostgreSQL 用于保存用户和日志数据，Redis 已接入 Docker Compose，方便后续扩展后台任务。
 
 ## 当前进度
 
@@ -8,22 +8,27 @@
 
 - FastAPI 后端应用入口和统一路由注册
 - 健康检查接口：`GET /health`
-- 认证占位接口：`POST /auth/register`、`POST /auth/login`
-- 日志占位接口：上传、列表、详情、触发分析
+- 真实注册和登录接口：`POST /auth/register`、`POST /auth/login`
+- 用户表自动初始化、重复邮箱检查、密码最小长度校验、加盐密码哈希和数据库保存
+- 登录时根据邮箱查询用户、校验密码并生成签名 access token
+- 日志接口基于 Bearer token 识别当前用户，日志数据按账号隔离
+- 真实日志上传：接收文件、保存文件、写入数据库并返回日志 ID
+- 日志列表和详情：按当前用户查询已上传日志，展示状态、上传时间、文件名、所属用户和解析统计
+- 基础日志解析：提取时间戳、日志级别、内容，并识别 `ERROR` / `WARN` 等关键事件
+- 日志检索和筛选：支持按关键词、级别、时间范围筛选
 - 基于 Pydantic 的请求和响应 schema
-- 简单 service 层，占位模拟认证、日志存储和分析状态
+- service 层实现认证、日志存储、日志解析和基础分析汇总
 - PostgreSQL、Redis、API、前端的 Docker Compose 一键启动
-- Vue 3 + Vite 初版前端，用于测试后端接口
+- Vue 3 + Vite 前端，包含独立登录/注册页和登录后的日志工作台
 - Vite `/api` 代理，前端通过代理访问 Docker Compose 中的后端服务
-- 基础测试骨架和健康检查测试
+- 基础测试覆盖健康检查、认证、日志解析和账号隔离
 
 暂未实现：
 
-- 真实用户注册、登录、密码加密和鉴权
-- 日志文件持久化和数据库写入
+- 刷新 token、服务端 token 失效列表和完整会话管理
 - Redis 队列、后台任务或异步分析流程
-- 真正的日志解析、异常检测或 AI 分析
-- 生产级前端路由、状态管理、权限控制和界面细化
+- 更深入的异常检测、聚合统计和 AI 分析
+- 生产级前端路由、状态管理和更完整的界面细化
 
 ## 项目结构
 
@@ -37,11 +42,14 @@ app/
 frontend/
   src/
 tests/
+assets/
+  uploads/
 ```
 
 - `app/`：FastAPI 后端主应用
 - `frontend/`：Vue 3 + Vite 测试前端
 - `tests/`：后端自动化测试
+- `assets/uploads/`：本地上传日志文件目录，已被 Git 忽略
 - `docker-compose.yml`：本地一键启动 API、前端、PostgreSQL 和 Redis
 
 ## 接口列表
@@ -53,6 +61,13 @@ tests/
 - `GET /logs`
 - `GET /logs/{id}`
 - `POST /logs/{id}/analyze`
+
+`GET /logs` 和 `GET /logs/{id}` 支持可选筛选参数：
+
+- `keyword`
+- `level`
+- `start_time`
+- `end_time`
 
 ## 使用 Docker Compose 启动
 
@@ -67,6 +82,8 @@ docker compose up --build
 - 交互式接口文档：`http://localhost:8000/docs`
 
 前端在 Docker Compose 中会通过 `/api` 代理访问 `api` 服务。
+
+首次修改后端、前端或依赖时，建议使用 `--build` 重新构建镜像。
 
 ## 本地启动
 
@@ -94,7 +111,9 @@ npm run dev
 
 ## 备注
 
-- 业务逻辑目前是占位实现，便于在面试或学习场景中解释项目结构。
+- 当前分析能力仍是基础版本，主要用于打通日志上传、解析、筛选和汇总链路。
 - `app/core/config.py` 集中管理基于环境变量的配置。
-- PostgreSQL 和 Redis 已作为基础设施接入，但当前请求处理流程还没有真正依赖它们。
-- `frontend/` 是一个 Vue 测试前端，用于验证当前后端接口，界面和交互后续还可以继续细化。
+- PostgreSQL 已用于用户注册、登录、日志元数据和日志解析结果存储；Redis 已接入但当前还没有被请求处理流程使用。
+- 上传的日志文件保存在 `assets/uploads/`，Docker Compose 中使用 `uploaded_logs` volume 持久化。
+- 后端不会保存明文密码；当前使用 PBKDF2-SHA256 加盐哈希。
+- 前端不再预填测试密码，注册时使用浏览器的新密码输入模式，减少弱密码提示。

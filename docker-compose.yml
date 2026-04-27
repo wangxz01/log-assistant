@@ -25,9 +25,14 @@ services:
       POSTGRES_PORT: 5432
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      AUTH_SECRET_KEY: change-this-secret-key
+      ACCESS_TOKEN_EXPIRE_MINUTES: 60
+      UPLOAD_DIR: assets/uploads
     depends_on:
       - postgres
       - redis
+    volumes:
+      - uploaded_logs:/app/assets/uploads
 
   postgres:
     image: postgres:16-alpine
@@ -52,3 +57,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  uploaded_logs:
