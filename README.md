@@ -1,114 +1,66 @@
 # Log Assistant
 
-这是一个用于智能日志分析助手的最小全栈应用。当前版本已经打通基础主链路：注册/登录、上传日志、保存文件、解析日志、查看列表和详情、按条件筛选。PostgreSQL 用于保存用户和日志数据，Redis 已接入 Docker Compose，方便后续扩展后台任务。
+智能日志分析助手，支持日志上传、解析、筛选和 AI 分析。FastAPI 后端 + Vue 3 前端，PostgreSQL 存储，Docker Compose 一键部署。
 
-## 当前进度
+## 功能
 
-已完成：
+- 用户注册/登录，JWT 鉴权，日志数据按账号隔离
+- 日志上传（单文件/批量/拖拽），自动解析时间戳、级别、内容
+- 日志列表筛选（关键词、状态、时间范围）
+- 用户级日志编号，每个用户的日志从 #1 独立递增
+- AI 驱动的日志分析（调用 DeepSeek API），产出摘要、异常原因和排障建议
+- 分析历史记录，支持查看历次分析结果
+- Docker Compose 一键启动，开发环境热更新
 
-- FastAPI 后端应用入口和统一路由注册
-- 健康检查接口：`GET /health`
-- 真实注册和登录接口：`POST /auth/register`、`POST /auth/login`
-- 用户表自动初始化、重复邮箱检查、密码最小长度校验、加盐密码哈希和数据库保存
-- 登录时根据邮箱查询用户、校验密码并生成签名 access token
-- 日志接口基于 Bearer token 识别当前用户，日志数据按账号隔离
-- 日志编号按用户独立计数，每个用户的日志从 #1 开始递增，互不影响
-- 真实日志上传：接收文件、保存文件、写入数据库并返回日志 ID
-- 批量日志上传：前端可一次选择多个日志文件，后端逐个保存、解析并返回结果列表
-- 前端支持点击选择或拖拽上传日志文件
-- 日志列表和详情：按当前用户查询已上传日志，展示状态、上传时间、文件名、所属用户和解析统计
-- 基础日志解析：提取时间戳、日志级别、内容，并识别 `ERROR` / `WARN` 等关键事件
-- 日志检索和筛选：支持按关键词、级别、时间范围筛选
-- 基于 Pydantic 的请求和响应 schema
-- service 层实现认证、日志存储、日志解析和基础分析汇总
-- PostgreSQL、Redis、API、前端的 Docker Compose 一键启动
-- Vue 3 + Vite 前端，包含独立登录/注册页和登录后的日志工作台
-- 登录页与主界面分离，登录后才进入日志工作台
-- Vite `/api` 代理，前端通过代理访问 Docker Compose 中的后端服务
-- 日志列表查询改为“填写条件 -> 点击查询”模式，并显示当前应用的筛选条件
-- 日志上传支持单文件、多文件和拖拽上传
-- 基础测试覆盖健康检查、认证、日志解析和账号隔离
+## 快速开始
 
-暂未实现：
+### 1. 配置环境变量
 
-- 刷新 token、服务端 token 失效列表和完整会话管理
-- Redis 队列、后台任务或异步分析流程
-- 更深入的异常检测、聚合统计和 AI 分析
-- 生产级前端路由、状态管理和更完整的界面细化
-- 更完整的日志搜索体验，比如高亮命中内容、分页和更复杂的组合筛选
-- 更深入的日志分析展示，比如图表、聚合视图和告警规则
+复制示例文件并填写 DeepSeek API Key：
 
-## 项目结构
-
-```text
-app/
-  api/
-  core/
-  models/
-  schemas/
-  services/
-frontend/
-  src/
-tests/
-assets/
-  uploads/
-tools/
-  log_generator/
+```bash
+cp .env.example .env
 ```
 
-- `app/`：FastAPI 后端主应用
-- `frontend/`：Vue 3 + Vite 测试前端
-- `tests/`：后端自动化测试
-- `assets/uploads/`：本地上传日志文件目录，已被 Git 忽略
-- `tools/log_generator/`：批量生成测试日志文件的工具
-- `docker-compose.yml`：本地一键启动 API、前端、PostgreSQL 和 Redis
+编辑 `.env`，填入你的 API Key：
 
-## 接口列表
+```
+DEEPSEEK_API_KEY=your-deepseek-api-key
+```
 
-- `GET /health`
-- `POST /auth/register`
-- `POST /auth/login`
-- `POST /logs/upload`
-- `POST /logs/upload/batch`
-- `GET /logs`
-- `GET /logs/{id}`
-- `POST /logs/{id}/analyze`
+> 不配置 API Key 时项目仍可正常启动，但 AI 分析功能不可用。
 
-`GET /logs` 和 `GET /logs/{id}` 支持可选筛选参数：
-
-- `keyword`
-- `level`
-- `start_time`
-- `end_time`
-
-## 使用 Docker Compose 启动
-
-首次启动或修改了依赖（`requirements.txt`、`package.json`）时：
+### 2. 启动服务
 
 ```bash
 docker compose up --build
 ```
 
-启动后：
+启动后访问：
 
 - 前端页面：`http://localhost:5173`
 - API 地址：`http://localhost:8000`
-- 交互式接口文档：`http://localhost:8000/docs`
+- 接口文档：`http://localhost:8000/docs`
 
-前端在 Docker Compose 中会通过 `/api` 代理访问 `api` 服务。
+### 3. 使用流程
 
-容器已挂载源码目录并开启热更新，修改代码后无需重新构建：
+1. 在登录页注册账号并登录
+2. 在工作台上传日志文件（`.log` / `.txt`）
+3. 在日志列表中按关键词、状态、时间筛选
+4. 点击日志条目进入详情页
+5. 点击「分析」按钮，AI 将生成摘要、异常原因和排障建议
+6. 右侧面板可查看分析历史记录
 
-- 后端：uvicorn `--reload` 自动检测 `app/` 下文件变动并重启服务
-- 前端：Vite HMR 自动热更新 `frontend/src/` 下的组件
+## 开发模式
 
-仅当修改了 `requirements.txt` 或 `package.json` 等依赖文件时才需要重新 `docker compose up --build`。
+容器已挂载源码并开启热更新，修改代码后无需重新构建：
 
-前端上传控件支持点击选择和拖拽上传。选择一个文件时调用 `POST /logs/upload`，选择多个文件时调用 `POST /logs/upload/batch`。
+- 后端：uvicorn `--reload` 检测 `app/` 下文件变动并重启
+- 前端：Vite HMR 热更新 `frontend/src/` 下的组件
 
-## 本地启动
+仅修改了 `requirements.txt` 或 `package.json` 时才需重新 `docker compose up --build`。
 
-通常优先使用 Docker Compose。只有需要单独调试某一端时，再使用下面的本地启动方式。
+## 本地调试
 
 后端：
 
@@ -128,31 +80,52 @@ npm install
 npm run dev
 ```
 
-前端开发服务器默认运行在 `http://localhost:5173`。开发环境下，前端会请求 `/api`，再由 Vite 代理到 `http://localhost:8000` 上的后端接口。
-
 ## 生成测试日志
 
-项目提供了一个不依赖第三方库的日志生成脚本，可用于批量生成前端上传测试文件。
-
-默认生成 5 个日志文件，每个文件 120 行：
-
 ```bash
+# 默认生成 5 个文件，每个 120 行
 python tools/log_generator/generate_logs.py
-```
 
-自定义文件数量、行数和输出目录：
-
-```bash
+# 自定义数量和行数
 python tools/log_generator/generate_logs.py --files 10 --lines 300 --output sample_logs
 ```
 
-生成目录默认为 `sample_logs/`，该目录已被 Git 忽略。生成的日志包含时间戳、日志级别、服务名、请求 ID、用户 ID、耗时和模拟消息，可直接在前端上传。
+生成的日志包含时间戳、级别、服务名、请求 ID 等字段，可直接上传测试。
+
+## 项目结构
+
+```text
+app/
+  api/routes/       路由：auth, health, logs
+  core/             配置、数据库、安全
+  models/           数据模型
+  schemas/          请求/响应 schema
+  services/         业务逻辑：认证、日志、AI 分析
+frontend/
+  src/              Vue 3 + Vite 前端
+tests/              后端自动化测试
+tools/
+  log_generator/    测试日志生成器
+```
+
+## 接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/health` | 健康检查 |
+| POST | `/auth/register` | 注册 |
+| POST | `/auth/login` | 登录 |
+| POST | `/logs/upload` | 上传单个日志 |
+| POST | `/logs/upload/batch` | 批量上传日志 |
+| GET | `/logs` | 日志列表（支持 keyword/status/start_time/end_time 筛选） |
+| GET | `/logs/{id}` | 日志详情 |
+| POST | `/logs/{id}/analyze` | AI 分析日志 |
+| GET | `/logs/{id}/analyses` | 分析历史记录 |
 
 ## 备注
 
-- 当前分析能力仍是基础版本，主要用于打通日志上传、解析、筛选和汇总链路。
 - `app/core/config.py` 集中管理基于环境变量的配置。
-- PostgreSQL 已用于用户注册、登录、日志元数据和日志解析结果存储；Redis 已接入但当前还没有被请求处理流程使用。
-- 上传的日志文件保存在 `assets/uploads/`，Docker Compose 中使用 `uploaded_logs` volume 持久化。
-- 后端不会保存明文密码；当前使用 PBKDF2-SHA256 加盐哈希。
-- 前端不再预填测试密码，注册时使用浏览器的新密码输入模式，减少弱密码提示。
+- PostgreSQL 存储用户、日志元数据、解析结果和分析记录；Redis 已接入但暂未使用。
+- 上传文件保存在 `assets/uploads/`，Docker Compose 中使用 volume 持久化。
+- 密码使用 PBKDF2-SHA256 加盐哈希，不存储明文。
+- AI 分析通过 DeepSeek API 实现，使用 OpenAI SDK 调用。
