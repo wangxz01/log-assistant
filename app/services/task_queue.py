@@ -1,6 +1,4 @@
-import json
 import logging
-import threading
 import uuid
 from typing import Any
 
@@ -11,6 +9,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 TASK_TTL = 86400  # 24 hours
+TASK_QUEUE_KEY = "analysis_tasks"
 
 
 def _get_redis() -> redis.Redis:
@@ -31,9 +30,7 @@ def submit_task(log_id: int, user_id: int, user_local_id: int) -> str:
     )
     r.expire(f"task:{task_id}", TASK_TTL)
     r.set(f"task:log:{user_id}:{log_id}", task_id, ex=TASK_TTL)
-
-    thread = threading.Thread(target=_run_task, args=(task_id,), daemon=True)
-    thread.start()
+    r.rpush(TASK_QUEUE_KEY, task_id)
 
     return task_id
 
@@ -51,7 +48,15 @@ def get_task_by_log(log_id: int, user_id: int) -> str | None:
     return r.get(f"task:log:{user_id}:{log_id}")
 
 
-def _run_task(task_id: str) -> None:
+def get_next_task(timeout: int = 5) -> str | None:
+    r = _get_redis()
+    item = r.blpop(TASK_QUEUE_KEY, timeout=timeout)
+    if not item:
+        return None
+    return item[1]
+
+
+def run_task(task_id: str) -> None:
     r = _get_redis()
     task_key = f"task:{task_id}"
 

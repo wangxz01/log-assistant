@@ -2,7 +2,7 @@
 
 Log Assistant 是一个面向日志排障场景的智能分析平台。项目已经完成从账号体系、日志上传、日志解析、筛选检索，到异步 AI 分析和可视化排障面板的完整主链路。
 
-当前版本适合用于课程项目、面试展示和后续功能扩展：代码结构清晰，功能边界明确，能够通过 Docker Compose 一条命令启动前端、后端、PostgreSQL 和 Redis。
+当前版本适合用于课程项目、面试展示和后续功能扩展：代码结构清晰，功能边界明确，能够通过 Docker Compose 一条命令启动前端、后端、后台 Worker、PostgreSQL 和 Redis。
 
 ## 项目亮点
 
@@ -10,10 +10,10 @@ Log Assistant 是一个面向日志排障场景的智能分析平台。项目已
 - **账号数据隔离**：日志按用户隔离，每个用户只能访问自己的日志和分析记录。
 - **真实后端能力**：不是纯前端 demo，日志文件会保存到磁盘，元数据和解析结果会进入 PostgreSQL。
 - **结构化解析结果**：日志行会解析出时间、级别、服务/模块名和内容，便于检索与统计。
-- **异步分析流程**：分析任务提交后进入 Redis 状态管理，前端轮询展示排队、分析中、完成、失败等状态。
+- **异步分析流程**：分析任务提交后进入 Redis 队列，由独立 Worker 消费执行，前端轮询展示排队、分析中、完成、失败等状态。
 - **AI 排障结果**：通过 DeepSeek API 生成摘要、异常原因和排障建议，并保存历史分析记录。
 - **展示型排障面板**：前端聚合高频异常、关键服务、请求链路、问题关键词和关键事件时间线，适合演示。
-- **一键本地部署**：Docker Compose 同时启动 API、前端、PostgreSQL、Redis，开发环境支持热更新。
+- **一键本地部署**：Docker Compose 同时启动 API、Worker、前端、PostgreSQL、Redis，开发环境支持热更新。
 - **可复现演示数据**：提供 demo 数据脚本和截图，方便快速展示项目效果。
 
 ## 界面预览
@@ -55,7 +55,7 @@ Log Assistant 是一个面向日志排障场景的智能分析平台。项目已
 
 - `POST /logs/{id}/analyze` 提交真实分析任务
 - Redis 保存任务状态：`pending`、`running`、`completed`、`failed`
-- 后台线程执行分析，避免阻塞请求
+- 独立 Worker 消费 Redis 队列并执行 AI 分析，避免 API 请求被长任务阻塞
 - 分析完成后写入 `analysis_records`
 - 前端实时轮询任务状态并刷新结果
 - 支持查看历史分析记录
@@ -80,6 +80,7 @@ Log Assistant 是一个面向日志排障场景的智能分析平台。项目已
 | 前端 | Vue 3, Vite |
 | AI 分析 | DeepSeek API, OpenAI SDK |
 | 测试 | pytest |
+| 数据库迁移 | Alembic |
 | 部署 | Docker Compose |
 
 ## 快速开始
@@ -175,8 +176,34 @@ npm run dev
 Docker 开发模式已挂载源码并开启热更新：
 
 - 后端：uvicorn `--reload` 检测 `app/` 下文件变动并重启
+- Worker：`python -m app.worker` 独立消费 Redis 分析队列
 - 前端：Vite HMR 热更新 `frontend/src/` 下组件
+- 数据库：API 容器启动前自动执行 `alembic upgrade head`
 - 工具脚本：`tools/` 已挂载到 API 容器，demo 数据脚本可直接执行
+
+## 数据库迁移
+
+项目使用 Alembic 管理 PostgreSQL 表结构。
+
+Docker 启动时会自动执行：
+
+```bash
+alembic upgrade head
+```
+
+本地开发也可以手动执行：
+
+```bash
+alembic upgrade head
+```
+
+如果你的本地数据库是在引入 Alembic 之前创建的，表结构已经存在但没有迁移版本记录，可以先标记当前版本：
+
+```bash
+alembic stamp head
+```
+
+之后再使用 `alembic upgrade head` 管理后续结构变更。
 
 ## 项目结构
 
@@ -187,6 +214,7 @@ app/
   models/           数据模型
   schemas/          请求/响应 schema
   services/         业务逻辑：认证、日志、AI 分析、任务状态
+  worker.py         独立后台 Worker，消费 Redis 分析任务
 frontend/
   src/              Vue 3 + Vite 前端
 tests/              后端自动化测试
@@ -220,14 +248,13 @@ docs/
 | 日志列表与详情 | 已完成 | 支持账号隔离、列表筛选、详情查看 |
 | 真实注册登录 | 已完成 | 用户表、重复邮箱检查、密码哈希、JWT、Cookie 会话恢复 |
 | AI 分析 | 已完成 | 摘要、异常原因、排障建议、历史记录 |
-| 异步分析 | 已完成 | Redis 状态、后台分析、前端轮询 |
+| 异步分析 | 已完成 | Redis 队列、独立 Worker、任务状态、前端轮询 |
 | 展示型结果页 | 已完成 | 高频异常、关键信息聚合、关键事件、截图 |
+| 数据库迁移 | 已完成 | Alembic 管理表结构，Docker 启动自动迁移 |
 
 ## 待完善方向
 
 - 增加 refresh token 机制，进一步拉长会话有效期并支持主动续期。
-- 用独立 worker 替代当前进程内后台线程，增强生产环境可靠性。
-- 增加数据库 migration 工具，例如 Alembic。
 - 为前端补充自动化测试。
 - 日志查询继续增强分页、高亮命中、复杂组合筛选。
 - 分析面板继续增加趋势图、服务维度聚合和告警规则。
@@ -246,6 +273,6 @@ npm run build
 
 - `app/core/config.py` 集中管理基于环境变量的配置。
 - PostgreSQL 存储用户、日志元数据、解析结果和分析记录。
-- Redis 用于异步分析任务状态管理，任务状态默认保留 24 小时。
+- Redis 用于异步分析任务队列和状态管理，任务状态默认保留 24 小时。
 - 上传文件保存在 `assets/uploads/`，Docker Compose 中使用 volume 持久化。
 - AI 分析通过 DeepSeek API 实现，使用 OpenAI SDK 调用。

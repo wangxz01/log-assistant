@@ -6,6 +6,9 @@ from psycopg.rows import dict_row
 from app.core.config import settings
 
 
+_migration_checked = False
+
+
 def get_connection() -> psycopg.Connection:
     last_error: psycopg.OperationalError | None = None
 
@@ -23,83 +26,35 @@ def get_connection() -> psycopg.Connection:
 
 
 def initialize_database() -> None:
+    global _migration_checked
+
+    if _migration_checked:
+        return
+
+    expected_revision = _get_head_revision()
+
     with get_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                email VARCHAR(255) NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-            """
+        row = connection.execute("SELECT to_regclass('public.alembic_version') AS table_name").fetchone()
+        if not row["table_name"]:
+            raise RuntimeError("Database migrations have not been applied. Run `alembic upgrade head`.")
+
+        version_row = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        current_revision = version_row["version_num"] if version_row else None
+
+    if current_revision != expected_revision:
+        raise RuntimeError(
+            "Database schema is not up to date. "
+            f"Current revision: {current_revision or 'none'}, expected: {expected_revision}. "
+            "Run `alembic upgrade head`."
         )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS logs (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                user_local_id INTEGER NOT NULL,
-                original_filename VARCHAR(255) NOT NULL,
-                stored_filename VARCHAR(255) NOT NULL,
-                storage_path TEXT NOT NULL,
-                content_type VARCHAR(255),
-                size_bytes INTEGER NOT NULL,
-                status VARCHAR(50) NOT NULL DEFAULT 'uploaded',
-                uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                UNIQUE (user_id, user_local_id)
-            );
-            """
-        )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS log_entries (
-                id SERIAL PRIMARY KEY,
-                log_id INTEGER NOT NULL REFERENCES logs(id) ON DELETE CASCADE,
-                line_number INTEGER NOT NULL,
-                event_time TIMESTAMPTZ,
-                timestamp_text TEXT,
-                level VARCHAR(20),
-                service_name VARCHAR(255),
-                message TEXT NOT NULL,
-                is_key_event BOOLEAN NOT NULL DEFAULT FALSE
-            );
-            """
-        )
-        connection.execute(
-            "ALTER TABLE log_entries ADD COLUMN IF NOT EXISTS service_name VARCHAR(255);"
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_logs_user_id ON logs(user_id);"
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_logs_uploaded_at ON logs(uploaded_at);"
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_log_entries_log_id ON log_entries(log_id);"
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_log_entries_level ON log_entries(level);"
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_log_entries_service_name ON log_entries(service_name);"
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_log_entries_event_time ON log_entries(event_time);"
-        )
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS analysis_records (
-                id SERIAL PRIMARY KEY,
-                log_id INTEGER NOT NULL REFERENCES logs(id) ON DELETE CASCADE,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                summary TEXT NOT NULL,
-                causes TEXT NOT NULL,
-                suggestions TEXT NOT NULL,
-                analyzed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-            """
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_analysis_records_log_id ON analysis_records(log_id);"
-        )
+
+    _migration_checked = True
+
+
+def _get_head_revision() -> str:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    alembic_config = Config("alembic.ini")
+    script = ScriptDirectory.from_config(alembic_config)
+    return script.get_current_head()
