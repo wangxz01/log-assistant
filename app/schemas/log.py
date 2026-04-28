@@ -59,10 +59,17 @@ class LogDetailResponse(BaseModel):
 
 class AnalyzeResponse(BaseModel):
     log_id: int
+    task_id: str
     status: str
-    summary: str
-    causes: str
-    suggestions: str
+
+
+class AnalyzeStatusResponse(BaseModel):
+    task_id: str
+    status: str
+    summary: str | None = None
+    causes: str | None = None
+    suggestions: str | None = None
+    error: str | None = None
 
 
 class AnalysisRecord(BaseModel):

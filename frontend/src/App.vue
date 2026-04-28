@@ -12,6 +12,8 @@ const selectedLog = ref(null);
 const selectedLogLoading = ref(false);
 const analysisResult = ref(null);
 const analysisLoading = ref(false);
+const analysisStatus = ref("");
+const analysisPollTimer = ref(null);
 const analysisHistory = ref([]);
 const analysisHistoryLoading = ref(false);
 const uploadFiles = ref([]);
@@ -269,20 +271,61 @@ async function analyzeLog(logId = selectedLogId.value) {
     return;
   }
 
+  stopPolling();
   analysisLoading.value = true;
+  analysisStatus.value = "pending";
+  analysisResult.value = null;
   selectedLogId.value = Number(logId);
 
   try {
-    analysisResult.value = await requestApi(`/logs/${selectedLogId.value}/analyze`, {
+    await requestApi(`/logs/${selectedLogId.value}/analyze`, {
       method: "POST",
     });
-    await loadLogs();
-    await loadLogDetail(selectedLogId.value);
-    await loadAnalysisHistory(selectedLogId.value);
+    startPolling(selectedLogId.value);
   } catch {
-    analysisResult.value = null;
-  } finally {
     analysisLoading.value = false;
+    analysisStatus.value = "";
+  }
+}
+
+function startPolling(logId) {
+  stopPolling();
+  analysisPollTimer.value = setInterval(() => pollAnalysisStatus(logId), 2000);
+}
+
+function stopPolling() {
+  if (analysisPollTimer.value) {
+    clearInterval(analysisPollTimer.value);
+    analysisPollTimer.value = null;
+  }
+}
+
+async function pollAnalysisStatus(logId) {
+  try {
+    const data = await requestApi(`/logs/${logId}/analyze/status`);
+    analysisStatus.value = data.status;
+
+    if (data.status === "completed") {
+      stopPolling();
+      analysisLoading.value = false;
+      analysisResult.value = {
+        summary: data.summary,
+        causes: data.causes,
+        suggestions: data.suggestions,
+      };
+      await loadLogs();
+      await loadLogDetail(logId);
+      await loadAnalysisHistory(logId);
+    } else if (data.status === "failed") {
+      stopPolling();
+      analysisLoading.value = false;
+      analysisStatus.value = "failed";
+      errorMessage.value = data.error || "分析失败，请重试。";
+    }
+  } catch {
+    stopPolling();
+    analysisLoading.value = false;
+    analysisStatus.value = "";
   }
 }
 
@@ -417,6 +460,11 @@ function formatDate(value) {
   }
 
   return new Date(value).toLocaleString();
+}
+
+function splitItems(text) {
+  if (!text) return [];
+  return text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
 }
 
 onMounted(async () => {
@@ -691,9 +739,10 @@ onMounted(async () => {
             <h2>{{ selectedLog?.filename || "未选择日志" }}</h2>
           </div>
           <div class="button-row">
-            <span class="tag">{{ selectedLog?.status }}</span>
+            <span v-if="analysisLoading" class="tag tag-active">{{ analysisStatus === 'running' ? '分析中' : '排队中' }}</span>
+            <span v-else class="tag">{{ selectedLog?.status }}</span>
             <button class="primary-button" type="button" :disabled="!selectedLogId || analysisLoading" @click="analyzeLog()">
-              {{ analysisLoading ? "分析中" : "分析" }}
+              {{ analysisLoading ? "请稍候..." : "分析" }}
             </button>
             <button class="secondary-button" type="button" @click="backToWorkspace">返回工作台</button>
           </div>
@@ -734,15 +783,19 @@ onMounted(async () => {
               </div>
               <div class="analysis-card">
                 <h3>摘要</h3>
-                <p>{{ analysisResult.summary }}</p>
+                <p class="analysis-text">{{ analysisResult.summary }}</p>
               </div>
               <div class="analysis-card analysis-card-warn">
                 <h3>异常原因</h3>
-                <p>{{ analysisResult.causes }}</p>
+                <ul class="analysis-list">
+                  <li v-for="(item, i) in splitItems(analysisResult.causes)" :key="i">{{ item }}</li>
+                </ul>
               </div>
               <div class="analysis-card analysis-card-ok">
                 <h3>排障建议</h3>
-                <p>{{ analysisResult.suggestions }}</p>
+                <ul class="analysis-list">
+                  <li v-for="(item, i) in splitItems(analysisResult.suggestions)" :key="i">{{ item }}</li>
+                </ul>
               </div>
             </div>
 

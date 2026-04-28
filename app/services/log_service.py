@@ -209,38 +209,22 @@ class LogService:
         log = self._get_log_row(user_local_id, user)
         log_id = log["id"]
 
-        entries = self._get_entry_rows(log_id)
-        log_content = "\n".join(e["message"] for e in entries)
+        from app.services.task_queue import get_task_by_log, submit_task
 
-        if not log_content.strip():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No log entries to analyze.",
-            )
+        existing_task_id = get_task_by_log(log_id, user.id)
+        if existing_task_id:
+            from app.services.task_queue import get_task_status
 
-        from app.services.ai_service import analyze_log_content
+            existing = get_task_status(existing_task_id)
+            if existing and existing.get("status") in ("pending", "running"):
+                return AnalyzeResponse(log_id=user_local_id, task_id=existing_task_id, status=existing["status"])
 
-        result = analyze_log_content(log_content)
-
-        with get_connection() as connection:
-            connection.execute(
-                "UPDATE logs SET status = %s WHERE id = %s AND user_id = %s",
-                ("analyzed", log_id, user.id),
-            )
-            connection.execute(
-                """
-                INSERT INTO analysis_records (log_id, user_id, summary, causes, suggestions)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (log_id, user.id, result["summary"], result["causes"], result["suggestions"]),
-            )
+        task_id = submit_task(log_id, user.id, user_local_id)
 
         return AnalyzeResponse(
             log_id=user_local_id,
-            status="analyzed",
-            summary=result["summary"],
-            causes=result["causes"],
-            suggestions=result["suggestions"],
+            task_id=task_id,
+            status="pending",
         )
 
     def list_analyses(self, user_local_id: int, user: User) -> AnalysisHistoryResponse:

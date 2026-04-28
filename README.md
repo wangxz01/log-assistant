@@ -9,8 +9,9 @@
 - 日志列表筛选（关键词、状态、时间范围）
 - 用户级日志编号，每个用户的日志从 #1 独立递增
 - AI 驱动的日志分析（调用 DeepSeek API），产出摘要、异常原因和排障建议
+- 异步后台分析，基于 Redis 任务队列，前端实时轮询进度
 - 分析历史记录，支持查看历次分析结果
-- Docker Compose 一键启动，开发环境热更新
+- Docker Compose 一键启动（API、前端、PostgreSQL、Redis），开发环境热更新
 
 ## 快速开始
 
@@ -48,8 +49,9 @@ docker compose up --build
 2. 在工作台上传日志文件（`.log` / `.txt`）
 3. 在日志列表中按关键词、状态、时间筛选
 4. 点击日志条目进入详情页
-5. 点击「分析」按钮，AI 将生成摘要、异常原因和排障建议
-6. 右侧面板可查看分析历史记录
+5. 点击「分析」按钮，任务提交到后台队列，前端实时显示进度（排队中 → 分析中）
+6. 分析完成后自动展示摘要、异常原因（列表）和排障建议（列表）
+7. 右侧面板可查看分析历史记录，点击可回顾
 
 ## 开发模式
 
@@ -119,13 +121,15 @@ tools/
 | POST | `/logs/upload/batch` | 批量上传日志 |
 | GET | `/logs` | 日志列表（支持 keyword/status/start_time/end_time 筛选） |
 | GET | `/logs/{id}` | 日志详情 |
-| POST | `/logs/{id}/analyze` | AI 分析日志 |
+| POST | `/logs/{id}/analyze` | 提交 AI 分析任务（异步） |
+| GET | `/logs/{id}/analyze/status` | 查询分析任务进度和结果 |
 | GET | `/logs/{id}/analyses` | 分析历史记录 |
 
 ## 备注
 
 - `app/core/config.py` 集中管理基于环境变量的配置。
-- PostgreSQL 存储用户、日志元数据、解析结果和分析记录；Redis 已接入但暂未使用。
+- PostgreSQL 存储用户、日志元数据、解析结果和分析记录。
+- Redis 用于异步分析任务的状态管理（pending / running / completed / failed），任务结果保留 24 小时。
 - 上传文件保存在 `assets/uploads/`，Docker Compose 中使用 volume 持久化。
 - 密码使用 PBKDF2-SHA256 加盐哈希，不存储明文。
-- AI 分析通过 DeepSeek API 实现，使用 OpenAI SDK 调用。
+- AI 分析通过 DeepSeek API 实现，使用 OpenAI SDK 调用，后台线程执行不阻塞请求。

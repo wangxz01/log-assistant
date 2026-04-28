@@ -8,9 +8,12 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """\
 你是一位专业的日志分析工程师。请根据提供的日志内容进行分析，返回严格的 JSON 格式结果，包含以下字段：
 
-- summary: 日志整体摘要（2-3 句话，概括日志覆盖的时间段、主要活动和整体健康状态）
-- causes: 发现的异常原因（逐条列出，每条说明具体错误和相关上下文；如果正常则说明"未发现明显异常"）
-- suggestions: 排障建议（针对每个异常给出具体的排查和修复建议；如果正常则给出预防性建议）
+- "summary": 字符串，日志整体摘要（2-3 句话，概括日志覆盖的时间段、主要活动和整体健康状态）
+- "causes": 字符串数组，每条为一个独立的异常原因（简明扼要，每条不超过两句话；如果正常则返回 ["未发现明显异常"]）
+- "suggestions": 字符串数组，每条为一个独立的排障建议（具体可操作，每条不超过两句话；如果正常则返回预防性建议）
+
+示例格式：
+{"summary": "...", "causes": ["原因1", "原因2"], "suggestions": ["建议1", "建议2"]}
 
 只返回 JSON，不要包含其他内容。\
 """
@@ -54,7 +57,9 @@ def analyze_log_content(log_content: str) -> dict[str, str]:
 
     def to_str(value):
         if isinstance(value, list):
-            return "\n".join(str(item) for item in value)
+            return "\n\n".join(str(item).strip() for item in value if item)
+        if isinstance(value, str):
+            return value.strip()
         return str(value) if value is not None else ""
 
     return {

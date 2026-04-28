@@ -529,17 +529,33 @@ select {
 }
 
 .analysis-card h3 {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   color: #374151;
   font-size: 14px;
 }
 
-.analysis-card p {
+.analysis-text {
   margin: 0;
   color: #1f2933;
   font-size: 13px;
   line-height: 1.7;
-  white-space: pre-wrap;
+}
+
+.analysis-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.analysis-list li {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.6);
+  color: #1f2933;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .analysis-card-warn {
@@ -551,6 +567,11 @@ select {
   color: #9a6a10;
 }
 
+.analysis-card-warn .analysis-list li {
+  background: #fff8ee;
+  border-left: 3px solid #e8a840;
+}
+
 .analysis-card-ok {
   border-color: #b0d8c8;
   background: #f3faf7;
@@ -558,6 +579,11 @@ select {
 
 .analysis-card-ok h3 {
   color: #1a6b4a;
+}
+
+.analysis-card-ok .analysis-list li {
+  background: #edf8f3;
+  border-left: 3px solid #4db882;
 }
 
 /* Analysis history */
@@ -645,6 +671,17 @@ tbody tr.key {
   color: #334155;
   font-size: 12px;
   font-weight: 700;
+}
+
+.tag-active {
+  background: #2f7d68;
+  color: #ffffff;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 .meta-list {
