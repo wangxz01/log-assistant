@@ -218,7 +218,9 @@ app/
   services/         业务逻辑：认证、日志、AI 分析、任务状态
   worker.py         独立后台 Worker，消费 Redis 分析任务
 frontend/
-  src/              Vue 3 + Vite 前端
+  src/
+    composables/    可复用逻辑：useApi, useAuth, useFilters, useUpload, useFormat
+    __tests__/      前端单元测试（Vitest）
 tests/              后端自动化测试
 tools/
   demo_data/        演示数据脚本
@@ -237,7 +239,7 @@ docs/
 | `POST` | `/logs/upload` | 上传单个日志 |
 | `POST` | `/logs/upload/batch` | 批量上传日志 |
 | `GET` | `/logs` | 日志列表，支持 `keyword`、`status`、`start_time`、`end_time` |
-| `GET` | `/logs/{id}` | 日志详情 |
+| `GET` | `/logs/{id}` | 日志详情，支持 `page`、`per_page` 分页 |
 | `POST` | `/logs/{id}/analyze` | 提交 AI 分析任务 |
 | `GET` | `/logs/{id}/analyze/status` | 查询分析任务进度和结果 |
 | `GET` | `/logs/{id}/analyses` | 查看分析历史记录 |
@@ -256,17 +258,23 @@ docs/
 
 ## 待完善方向
 
-- 为前端补充自动化测试。
-- 日志查询继续增强分页、高亮命中、复杂组合筛选。
+- 日志搜索增强：高亮命中内容、复杂组合筛选。
 - 分析面板继续增加趋势图、服务维度聚合和告警规则。
+- 前端组件化拆分（从单文件拆分为 .vue 页面组件）。
 
 ## 验证
 
 当前版本已通过：
 
 ```bash
+# 后端测试
 pytest -q
+
+# 前端测试
 cd frontend
+npm test
+
+# 前端构建
 npm run build
 ```
 
