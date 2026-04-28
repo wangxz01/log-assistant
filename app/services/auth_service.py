@@ -4,7 +4,7 @@ import psycopg
 from fastapi import HTTPException, status
 
 from app.core.database import get_connection, initialize_database
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import create_access_token, create_refresh_token, hash_password, verify_password
 from app.models.user import User
 from app.schemas.auth import LoginRequest, MessageResponse, RegisterRequest, TokenResponse
 
@@ -52,7 +52,11 @@ class AuthService:
             subject=str(user.id),
             extra_claims={"email": user.email},
         )
-        return TokenResponse(access_token=access_token)
+        refresh_token = create_refresh_token(
+            subject=str(user.id),
+            extra_claims={"email": user.email},
+        )
+        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
     def _find_user_by_email(self, email: str) -> User | None:
         with get_connection() as connection:

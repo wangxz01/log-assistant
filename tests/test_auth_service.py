@@ -8,7 +8,8 @@ from fastapi import HTTPException
 
 from app.api import dependencies as dependencies_module
 from app.api.dependencies import get_current_user
-from app.core.security import create_access_token
+from app.api.routes import auth as auth_routes
+from app.core.security import create_access_token, create_refresh_token
 from app.schemas.auth import LoginRequest, RegisterRequest
 from app.services import auth_service as auth_module
 from app.services.auth_service import AuthService
@@ -93,8 +94,10 @@ def test_login_returns_signed_access_token(fake_users: dict[str, dict[str, Any]]
 
     assert response.token_type == "bearer"
     assert response.access_token.count(".") == 2
+    assert response.refresh_token.count(".") == 2
     assert "demo-token" not in response.access_token
     assert _decode_jwt_payload(response.access_token)["email"] == "student@example.com"
+    assert _decode_jwt_payload(response.refresh_token)["type"] == "refresh"
 
 
 def test_login_rejects_wrong_password(fake_users: dict[str, dict[str, Any]]) -> None:
@@ -129,6 +132,40 @@ def test_current_user_can_be_loaded_from_cookie_token(monkeypatch: pytest.Monkey
 
     assert current_user.id == 5
     assert current_user.email == "student@example.com"
+
+
+def test_refresh_issues_new_access_token_from_refresh_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = {"id": 9, "email": "student@example.com", "password_hash": "hash"}
+
+    class RefreshConnection:
+        def __enter__(self) -> "RefreshConnection":
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple[str, ...]) -> FakeResult:
+            assert params == ("9",)
+            return FakeResult(row)
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.cookies: dict[str, str] = {}
+
+        def set_cookie(self, key: str, value: str, **kwargs: Any) -> None:
+            self.cookies[key] = value
+
+    monkeypatch.setattr(auth_routes, "initialize_database", lambda: None)
+    monkeypatch.setattr(auth_routes, "get_connection", lambda: RefreshConnection())
+
+    refresh_token = create_refresh_token(subject="9", extra_claims={"email": row["email"]})
+    response = FakeResponse()
+    token_response = auth_routes.refresh(response=response, refresh_token=refresh_token)
+
+    assert _decode_jwt_payload(token_response.access_token)["type"] == "access"
+    assert token_response.refresh_token == refresh_token
+    assert response.cookies["access_token"] == token_response.access_token
+    assert response.cookies["refresh_token"] == refresh_token
 
 
 def _decode_jwt_payload(token: str) -> dict[str, Any]:

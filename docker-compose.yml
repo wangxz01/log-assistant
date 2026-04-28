@@ -29,6 +29,7 @@ services:
       REDIS_PORT: 6379
       AUTH_SECRET_KEY: change-this-secret-key
       ACCESS_TOKEN_EXPIRE_MINUTES: 60
+      REFRESH_TOKEN_EXPIRE_DAYS: 14
       UPLOAD_DIR: assets/uploads
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
@@ -59,6 +60,7 @@ services:
       REDIS_PORT: 6379
       AUTH_SECRET_KEY: change-this-secret-key
       ACCESS_TOKEN_EXPIRE_MINUTES: 60
+      REFRESH_TOKEN_EXPIRE_DAYS: 14
       UPLOAD_DIR: assets/uploads
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}

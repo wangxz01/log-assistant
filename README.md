@@ -28,7 +28,7 @@ Log Assistant 是一个面向日志排障场景的智能分析平台。项目已
 - 用户登录
 - 密码 PBKDF2-SHA256 加盐哈希
 - JWT 鉴权
-- HttpOnly Cookie 保存登录态，刷新页面后可自动恢复会话
+- HttpOnly Cookie 保存登录态，access token 过期后可通过 refresh token 自动续期
 - 日志数据按账号隔离
 - 其他用户访问日志详情或分析结果时返回 404
 
@@ -56,6 +56,7 @@ Log Assistant 是一个面向日志排障场景的智能分析平台。项目已
 - `POST /logs/{id}/analyze` 提交真实分析任务
 - Redis 保存任务状态：`pending`、`running`、`completed`、`failed`
 - 独立 Worker 消费 Redis 队列并执行 AI 分析，避免 API 请求被长任务阻塞
+- AI Key 未配置时，前端会显示明确提示并禁用分析按钮
 - 分析完成后写入 `analysis_records`
 - 前端实时轮询任务状态并刷新结果
 - 支持查看历史分析记录
@@ -98,9 +99,10 @@ cp .env.example .env
 ```bash
 DEEPSEEK_API_KEY=your-deepseek-api-key
 DEEPSEEK_MODEL=deepseek-v4-flash
+REFRESH_TOKEN_EXPIRE_DAYS=14
 ```
 
-不配置 API Key 时，注册、登录、上传、解析、列表、筛选、demo 数据仍可使用；AI 在线分析会不可用。
+不配置 API Key 时，注册、登录、上传、解析、列表、筛选、demo 数据仍可使用；前端会提示 AI 未配置，并禁用在线分析按钮。
 
 ### 2. 启动服务
 
@@ -246,15 +248,14 @@ docs/
 |--------|------|------|
 | 日志上传与解析 | 已完成 | 文件保存、数据库记录、解析时间戳/级别/服务模块/内容 |
 | 日志列表与详情 | 已完成 | 支持账号隔离、列表筛选、详情查看 |
-| 真实注册登录 | 已完成 | 用户表、重复邮箱检查、密码哈希、JWT、Cookie 会话恢复 |
-| AI 分析 | 已完成 | 摘要、异常原因、排障建议、历史记录 |
+| 真实注册登录 | 已完成 | 用户表、重复邮箱检查、密码哈希、JWT、Cookie 会话恢复、refresh token 续期 |
+| AI 分析 | 已完成 | 摘要、异常原因、排障建议、历史记录、AI Key 缺失提示 |
 | 异步分析 | 已完成 | Redis 队列、独立 Worker、任务状态、前端轮询 |
 | 展示型结果页 | 已完成 | 高频异常、关键信息聚合、关键事件、截图 |
 | 数据库迁移 | 已完成 | Alembic 管理表结构，Docker 启动自动迁移 |
 
 ## 待完善方向
 
-- 增加 refresh token 机制，进一步拉长会话有效期并支持主动续期。
 - 为前端补充自动化测试。
 - 日志查询继续增强分页、高亮命中、复杂组合筛选。
 - 分析面板继续增加趋势图、服务维度聚合和告警规则。

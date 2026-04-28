@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     redis_port: int = 6379
     auth_secret_key: str = "change-this-secret-key"
     access_token_expire_minutes: int = 60
+    refresh_token_expire_days: int = 14
     upload_dir: str = "assets/uploads"
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"

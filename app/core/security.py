@@ -54,12 +54,43 @@ def verify_password(password: str, stored_hash: str) -> bool:
 
 
 def create_access_token(subject: str, extra_claims: dict[str, Any] | None = None) -> str:
+    return _create_token(
+        subject=subject,
+        token_type="access",
+        expires_in_seconds=settings.access_token_expire_minutes * 60,
+        extra_claims=extra_claims,
+    )
+
+
+def create_refresh_token(subject: str, extra_claims: dict[str, Any] | None = None) -> str:
+    return _create_token(
+        subject=subject,
+        token_type="refresh",
+        expires_in_seconds=settings.refresh_token_expire_days * 24 * 60 * 60,
+        extra_claims=extra_claims,
+    )
+
+
+def decode_access_token(token: str) -> dict[str, Any] | None:
+    return _decode_token(token, expected_type="access")
+
+
+def decode_refresh_token(token: str) -> dict[str, Any] | None:
+    return _decode_token(token, expected_type="refresh")
+
+
+def _create_token(
+    subject: str,
+    token_type: str,
+    expires_in_seconds: int,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
     now = int(time.time())
     payload: dict[str, Any] = {
         "sub": subject,
         "iat": now,
-        "exp": now + settings.access_token_expire_minutes * 60,
-        "type": "access",
+        "exp": now + expires_in_seconds,
+        "type": token_type,
     }
 
     if extra_claims:
@@ -72,7 +103,7 @@ def create_access_token(subject: str, extra_claims: dict[str, Any] | None = None
     return f"{encoded_header}.{encoded_payload}.{signature}"
 
 
-def decode_access_token(token: str) -> dict[str, Any] | None:
+def _decode_token(token: str, expected_type: str) -> dict[str, Any] | None:
     try:
         encoded_header, encoded_payload, signature = token.split(".", 2)
     except ValueError:
@@ -88,7 +119,7 @@ def decode_access_token(token: str) -> dict[str, Any] | None:
     except (json.JSONDecodeError, ValueError):
         return None
 
-    if payload.get("type") != "access":
+    if payload.get("type") != expected_type:
         return None
 
     expires_at = payload.get("exp")

@@ -44,6 +44,7 @@ const appliedFilters = ref({
 
 const isAuthenticated = computed(() => Boolean(currentEmail.value || token.value));
 const apiStatusText = computed(() => (health.value?.status === "ok" ? "后端在线" : "后端未连接"));
+const aiConfigured = computed(() => Boolean(health.value?.ai_configured));
 const totalErrors = computed(() => logs.value.reduce((total, item) => total + (item.error_count || 0), 0));
 const totalWarnings = computed(() => logs.value.reduce((total, item) => total + (item.warn_count || 0), 0));
 const hasAppliedFilters = computed(() =>
@@ -242,7 +243,15 @@ async function restoreSession() {
   sessionLoading.value = true;
 
   try {
-    const user = await requestApi("/auth/me", { silent: true });
+    let user;
+
+    try {
+      user = await requestApi("/auth/me", { silent: true });
+    } catch {
+      await requestApi("/auth/refresh", { method: "POST", silent: true });
+      user = await requestApi("/auth/me", { silent: true });
+    }
+
     currentEmail.value = user.email;
     token.value = "";
     activeView.value = "workspace";
@@ -362,6 +371,11 @@ async function loadAnalysisHistory(logId = selectedLogId.value) {
 
 async function analyzeLog(logId = selectedLogId.value) {
   if (!isAuthenticated.value || !logId) {
+    return;
+  }
+
+  if (!aiConfigured.value) {
+    errorMessage.value = "AI 分析未配置：请在 .env 中设置 DEEPSEEK_API_KEY 后重启服务。";
     return;
   }
 
@@ -942,7 +956,8 @@ onMounted(async () => {
           <div class="button-row">
             <span v-if="analysisLoading" class="tag tag-active">{{ analysisStatus === 'running' ? '分析中' : '排队中' }}</span>
             <span v-else class="tag">{{ selectedLog?.status }}</span>
-            <button class="primary-button" type="button" :disabled="!selectedLogId || analysisLoading" @click="analyzeLog()">
+            <span v-if="!aiConfigured" class="tag tag-warning">AI 未配置</span>
+            <button class="primary-button" type="button" :disabled="!selectedLogId || analysisLoading || !aiConfigured" @click="analyzeLog()">
               {{ analysisLoading ? "请稍候..." : "分析" }}
             </button>
             <button class="secondary-button" type="button" @click="backToWorkspace">返回工作台</button>

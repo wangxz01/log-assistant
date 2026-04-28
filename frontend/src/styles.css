@@ -847,6 +847,11 @@ tbody tr.key {
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.tag-warning {
+  background: #fff3d6;
+  color: #9a6a10;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }

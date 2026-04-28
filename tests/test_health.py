@@ -12,3 +12,4 @@ def test_health_check_response() -> None:
     response = health_check()
 
     assert response.status == "ok"
+    assert isinstance(response.ai_configured, bool)
