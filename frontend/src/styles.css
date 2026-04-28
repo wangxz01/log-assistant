@@ -784,6 +784,21 @@ select {
   white-space: nowrap;
 }
 
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.pagination-info {
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .table-wrap {
   overflow-x: auto;
   border: 1px solid #e5e9ef;

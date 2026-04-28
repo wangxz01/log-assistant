@@ -52,9 +52,11 @@ def get_log(
     level: str | None = Query(default=None),
     start_time: str | None = Query(default=None),
     end_time: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
 ) -> LogDetailResponse:
-    return log_service.get_log(log_id, current_user, keyword, level, start_time, end_time)
+    return log_service.get_log(log_id, current_user, keyword, level, start_time, end_time, page, per_page)
 
 
 @router.post("/{log_id}/analyze", response_model=AnalyzeResponse)

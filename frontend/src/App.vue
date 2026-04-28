@@ -1,7 +1,10 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
-
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "/api";
+import { useApi } from "./composables/useApi.js";
+import { useAuth } from "./composables/useAuth.js";
+import { useFilters } from "./composables/useFilters.js";
+import { useUpload } from "./composables/useUpload.js";
+import { formatBytes, formatDate, formatJson, splitItems } from "./composables/useFormat.js";
 
 const activeView = ref("workspace");
 const health = ref(null);
@@ -16,66 +19,42 @@ const analysisStatus = ref("");
 const analysisPollTimer = ref(null);
 const analysisHistory = ref([]);
 const analysisHistoryLoading = ref(false);
-const uploadFiles = ref([]);
-const isDragActive = ref(false);
-const uploadLoading = ref(false);
-const uploadResult = ref(null);
-const authMode = ref("login");
-const authEmail = ref("");
-const authPassword = ref("");
-const authLoading = ref(false);
-const authResult = ref(null);
-const authNotice = ref("");
-const sessionLoading = ref(true);
-const token = ref("");
-const currentEmail = ref("");
-const lastResponse = ref(null);
-const errorMessage = ref("");
-const keywordFilter = ref("");
-const statusFilter = ref("");
-const startTimeFilter = ref("");
-const endTimeFilter = ref("");
-const appliedFilters = ref({
-  keyword: "",
-  status: "",
-  startTime: "",
-  endTime: "",
+const entriesPage = ref(1);
+const entriesPerPage = 50;
+const entriesTotalPages = ref(1);
+
+const { token, errorMessage, lastResponse, requestApi } = useApi();
+const {
+  authMode, authEmail, authPassword, authLoading, authResult, authNotice,
+  sessionLoading, currentEmail, isAuthenticated,
+  submitAuth, restoreSession, logout: authLogout,
+} = useAuth(requestApi);
+
+const {
+  keywordFilter, statusFilter, startTimeFilter, endTimeFilter,
+  appliedFilters, hasAppliedFilters, appliedFilterTags,
+  buildLogQuery, applyFilters, clearFilters,
+} = useFilters(async () => {
+  selectedLogId.value = null;
+  selectedLog.value = null;
+  analysisResult.value = null;
+  await loadLogs();
 });
 
-const isAuthenticated = computed(() => Boolean(currentEmail.value || token.value));
+const {
+  uploadFiles, isDragActive, uploadLoading, uploadResult,
+  submitUpload, onFileChange, onDragEnter, onDragLeave, onDrop,
+} = useUpload(requestApi, async (logId) => {
+  selectedLogId.value = logId;
+  await loadLogs();
+  await loadLogDetail(logId);
+});
+
 const apiStatusText = computed(() => (health.value?.status === "ok" ? "后端在线" : "后端未连接"));
 const aiConfigured = computed(() => Boolean(health.value?.ai_configured));
 const totalErrors = computed(() => logs.value.reduce((total, item) => total + (item.error_count || 0), 0));
 const totalWarnings = computed(() => logs.value.reduce((total, item) => total + (item.warn_count || 0), 0));
-const hasAppliedFilters = computed(() =>
-  Boolean(
-    appliedFilters.value.keyword ||
-      appliedFilters.value.status ||
-      appliedFilters.value.startTime ||
-      appliedFilters.value.endTime,
-  ),
-);
-const appliedFilterTags = computed(() => {
-  const tags = [];
 
-  if (appliedFilters.value.keyword) {
-    tags.push(`关键词：${appliedFilters.value.keyword}`);
-  }
-
-  if (appliedFilters.value.status) {
-    tags.push(`状态：${appliedFilters.value.status}`);
-  }
-
-  if (appliedFilters.value.startTime) {
-    tags.push(`开始：${appliedFilters.value.startTime}`);
-  }
-
-  if (appliedFilters.value.endTime) {
-    tags.push(`结束：${appliedFilters.value.endTime}`);
-  }
-
-  return tags;
-});
 const selectedEntries = computed(() => selectedLog.value?.entries || []);
 const keyEntries = computed(() =>
   selectedEntries.value.filter((entry) => {
@@ -83,503 +62,6 @@ const keyEntries = computed(() =>
     return entry.is_key_event || ["WARN", "ERROR", "FATAL", "CRITICAL"].includes(level);
   }),
 );
-const diagnosisMetrics = computed(() => {
-  const total = selectedLog.value?.total_parsed_entries || selectedEntries.value.length;
-  const errors = selectedLog.value?.total_error_count || 0;
-  const warnings = selectedLog.value?.total_warn_count || 0;
-  const keyCount = errors + warnings;
-  const riskLevel = errors > 0 ? "严重" : warnings > 0 ? "关注" : "平稳";
-  const topIssue = highFrequencyExceptions.value[0]?.title || "未发现高频异常";
-
-  return [
-    { label: "风险等级", value: riskLevel },
-    { label: "关键事件", value: keyCount },
-    { label: "异常占比", value: total ? `${Math.round((keyCount / total) * 100)}%` : "0%" },
-    { label: "主要问题", value: topIssue },
-  ];
-});
-const highFrequencyExceptions = computed(() => {
-  const groups = new Map();
-
-  for (const entry of keyEntries.value) {
-    const title = normalizeIssueTitle(entry.message);
-    const current = groups.get(title) || {
-      title,
-      count: 0,
-      level: entry.level || "-",
-      firstLine: entry.line_number,
-      lastLine: entry.line_number,
-      sample: entry.message,
-    };
-
-    current.count += 1;
-    current.lastLine = entry.line_number;
-    if (rankLevel(entry.level) > rankLevel(current.level)) {
-      current.level = entry.level;
-    }
-    groups.set(title, current);
-  }
-
-  return Array.from(groups.values())
-    .sort((a, b) => b.count - a.count || rankLevel(b.level) - rankLevel(a.level))
-    .slice(0, 6);
-});
-const keyInformationGroups = computed(() => [
-  {
-    title: "涉及服务",
-    items: topExtractedValues(selectedEntries.value, (entry) => entry.service_name || extractServiceName(entry.message)),
-    empty: "未识别到服务名",
-  },
-  {
-    title: "请求链路",
-    items: topExtractedValues(selectedEntries.value, (entry) => extractRequestId(entry.message)),
-    empty: "未识别到请求 ID",
-  },
-  {
-    title: "问题关键词",
-    items: topKeywordHits(keyEntries.value),
-    empty: "未识别到明显关键词",
-  },
-]);
-const keyEventTimeline = computed(() => keyEntries.value.slice(0, 8));
-
-async function requestApi(path, options = {}) {
-  errorMessage.value = "";
-  const { silent = false, ...fetchOptions } = options;
-
-  try {
-    const headers = new Headers(fetchOptions.headers || {});
-
-    if (token.value && path.startsWith("/logs")) {
-      headers.set("Authorization", `Bearer ${token.value}`);
-    }
-
-    const response = await fetch(`${apiBaseUrl}${path}`, {
-      ...fetchOptions,
-      headers,
-      credentials: "include",
-    });
-    const contentType = response.headers.get("content-type") || "";
-    const body = contentType.includes("application/json") ? await response.json() : await response.text();
-
-    lastResponse.value = {
-      path,
-      status: response.status,
-      ok: response.ok,
-      body,
-    };
-
-    if (!response.ok) {
-      throw new Error(getErrorMessage(response.status, body));
-    }
-
-    return body;
-  } catch (error) {
-    if (!silent) {
-      errorMessage.value = error instanceof Error ? error.message : "请求失败";
-    }
-    throw error;
-  }
-}
-
-function getErrorMessage(status, body) {
-  if (body && typeof body === "object" && body.detail) {
-    if (Array.isArray(body.detail)) {
-      return body.detail.map((item) => item.msg || JSON.stringify(item)).join("；");
-    }
-
-    return body.detail;
-  }
-
-  if (typeof body === "string" && body) {
-    return body;
-  }
-
-  return `请求失败：${status}`;
-}
-
-async function checkHealth() {
-  try {
-    health.value = await requestApi("/health");
-  } catch {
-    health.value = null;
-  }
-}
-
-async function submitAuth() {
-  authLoading.value = true;
-  authNotice.value = "";
-
-  try {
-    authResult.value = await requestApi(`/auth/${authMode.value}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email: authEmail.value,
-        password: authPassword.value,
-      }),
-    });
-
-    if (authResult.value.access_token) {
-      token.value = authResult.value.access_token;
-      currentEmail.value = authEmail.value;
-      activeView.value = "workspace";
-      await loadLogs();
-      return;
-    }
-
-    authNotice.value = authResult.value.message || "注册成功，请登录。";
-    authMode.value = "login";
-  } catch {
-    authResult.value = null;
-  } finally {
-    authLoading.value = false;
-  }
-}
-
-async function restoreSession() {
-  sessionLoading.value = true;
-
-  try {
-    let user;
-
-    try {
-      user = await requestApi("/auth/me", { silent: true });
-    } catch {
-      await requestApi("/auth/refresh", { method: "POST", silent: true });
-      user = await requestApi("/auth/me", { silent: true });
-    }
-
-    currentEmail.value = user.email;
-    token.value = "";
-    activeView.value = "workspace";
-    await loadLogs();
-  } catch {
-    currentEmail.value = "";
-    token.value = "";
-  } finally {
-    sessionLoading.value = false;
-  }
-}
-
-async function logout() {
-  try {
-    await requestApi("/auth/logout", { method: "POST", silent: true });
-  } catch {
-    // Local state should still be cleared if the server is temporarily unreachable.
-  }
-
-  token.value = "";
-  currentEmail.value = "";
-  logs.value = [];
-  selectedLogId.value = null;
-  selectedLog.value = null;
-  analysisResult.value = null;
-  analysisHistory.value = [];
-  uploadResult.value = null;
-  authResult.value = null;
-  authMode.value = "login";
-}
-
-async function loadLogs() {
-  if (!isAuthenticated.value) {
-    logs.value = [];
-    return;
-  }
-
-  logsLoading.value = true;
-
-  try {
-    const data = await requestApi(`/logs${buildLogQuery()}`);
-    logs.value = data.items || [];
-
-    if (selectedLogId.value) {
-      const stillExists = logs.value.some((log) => log.id === selectedLogId.value);
-      if (!stillExists) {
-        selectedLogId.value = null;
-        selectedLog.value = null;
-        analysisResult.value = null;
-      }
-    }
-  } catch {
-    logs.value = [];
-  } finally {
-    logsLoading.value = false;
-  }
-}
-
-async function applyFilters() {
-  appliedFilters.value = {
-    keyword: keywordFilter.value.trim(),
-    status: statusFilter.value,
-    startTime: startTimeFilter.value.trim(),
-    endTime: endTimeFilter.value.trim(),
-  };
-  selectedLogId.value = null;
-  selectedLog.value = null;
-  analysisResult.value = null;
-  await loadLogs();
-}
-
-async function loadLogDetail(logId = selectedLogId.value) {
-  if (!isAuthenticated.value || !logId) {
-    return;
-  }
-
-  selectedLogLoading.value = true;
-  selectedLogId.value = Number(logId);
-
-  try {
-    selectedLog.value = await requestApi(`/logs/${selectedLogId.value}`);
-  } catch {
-    selectedLog.value = null;
-  } finally {
-    selectedLogLoading.value = false;
-  }
-}
-
-async function selectLog(logId) {
-  analysisResult.value = null;
-  await loadLogDetail(logId);
-  await loadAnalysisHistory(logId);
-  activeView.value = "detail";
-}
-
-function backToWorkspace() {
-  activeView.value = "workspace";
-}
-
-async function loadAnalysisHistory(logId = selectedLogId.value) {
-  if (!isAuthenticated.value || !logId) {
-    analysisHistory.value = [];
-    return;
-  }
-
-  analysisHistoryLoading.value = true;
-
-  try {
-    const data = await requestApi(`/logs/${logId}/analyses`);
-    analysisHistory.value = data.items || [];
-  } catch {
-    analysisHistory.value = [];
-  } finally {
-    analysisHistoryLoading.value = false;
-  }
-}
-
-async function analyzeLog(logId = selectedLogId.value) {
-  if (!isAuthenticated.value || !logId) {
-    return;
-  }
-
-  if (!aiConfigured.value) {
-    errorMessage.value = "AI 分析未配置：请在 .env 中设置 DEEPSEEK_API_KEY 后重启服务。";
-    return;
-  }
-
-  stopPolling();
-  analysisLoading.value = true;
-  analysisStatus.value = "pending";
-  analysisResult.value = null;
-  selectedLogId.value = Number(logId);
-
-  try {
-    await requestApi(`/logs/${selectedLogId.value}/analyze`, {
-      method: "POST",
-    });
-    startPolling(selectedLogId.value);
-  } catch {
-    analysisLoading.value = false;
-    analysisStatus.value = "";
-  }
-}
-
-function startPolling(logId) {
-  stopPolling();
-  pollAnalysisStatus(logId);
-  analysisPollTimer.value = setInterval(() => pollAnalysisStatus(logId), 2000);
-}
-
-function stopPolling() {
-  if (analysisPollTimer.value) {
-    clearInterval(analysisPollTimer.value);
-    analysisPollTimer.value = null;
-  }
-}
-
-async function pollAnalysisStatus(logId) {
-  try {
-    const data = await requestApi(`/logs/${logId}/analyze/status`);
-    analysisStatus.value = data.status;
-
-    if (data.status === "completed") {
-      stopPolling();
-      analysisLoading.value = false;
-      analysisResult.value = {
-        summary: data.summary,
-        causes: data.causes,
-        suggestions: data.suggestions,
-      };
-      await loadLogs();
-      await loadLogDetail(logId);
-      await loadAnalysisHistory(logId);
-    } else if (data.status === "failed") {
-      stopPolling();
-      analysisLoading.value = false;
-      analysisStatus.value = "failed";
-      errorMessage.value = data.error || "分析失败，请重试。";
-    } else if (data.status === "none") {
-      stopPolling();
-      analysisLoading.value = false;
-      analysisStatus.value = "";
-      errorMessage.value = "没有找到当前日志的分析任务，请重新点击分析。";
-    }
-  } catch {
-    stopPolling();
-    analysisLoading.value = false;
-    analysisStatus.value = "";
-  }
-}
-
-async function submitUpload() {
-  if (uploadFiles.value.length === 0) {
-    errorMessage.value = "请选择日志文件。";
-    return;
-  }
-
-  uploadLoading.value = true;
-
-  try {
-    const formData = new FormData();
-    const isBatchUpload = uploadFiles.value.length > 1;
-
-    for (const file of uploadFiles.value) {
-      formData.append(isBatchUpload ? "files" : "file", file);
-    }
-
-    uploadResult.value = await requestApi(isBatchUpload ? "/logs/upload/batch" : "/logs/upload", {
-      method: "POST",
-      body: formData,
-    });
-
-    const latestUpload = isBatchUpload ? uploadResult.value.items.at(-1) : uploadResult.value;
-    selectedLogId.value = latestUpload.id;
-    await loadLogs();
-    await loadLogDetail(latestUpload.id);
-  } catch {
-    uploadResult.value = null;
-  } finally {
-    uploadLoading.value = false;
-  }
-}
-
-function onFileChange(event) {
-  uploadFiles.value = Array.from(event.target.files || []);
-}
-
-function onDragEnter() {
-  isDragActive.value = true;
-}
-
-function onDragLeave(event) {
-  if (!event.currentTarget.contains(event.relatedTarget)) {
-    isDragActive.value = false;
-  }
-}
-
-function onDrop(event) {
-  isDragActive.value = false;
-  uploadFiles.value = Array.from(event.dataTransfer?.files || []).filter(isSupportedLogFile);
-
-  if (uploadFiles.value.length === 0) {
-    errorMessage.value = "请拖入 .log 或 .txt 文件。";
-  }
-}
-
-function isSupportedLogFile(file) {
-  const filename = file.name.toLowerCase();
-  return filename.endsWith(".log") || filename.endsWith(".txt") || file.type === "text/plain";
-}
-
-function buildLogQuery() {
-  const query = new URLSearchParams();
-  const filters = appliedFilters.value;
-
-  if (filters.keyword) {
-    query.set("keyword", filters.keyword);
-  }
-
-  if (filters.status) {
-    query.set("status", filters.status);
-  }
-
-  if (filters.startTime) {
-    query.set("start_time", filters.startTime);
-  }
-
-  if (filters.endTime) {
-    query.set("end_time", filters.endTime);
-  }
-
-  const queryString = query.toString();
-  return queryString ? `?${queryString}` : "";
-}
-
-async function clearFilters() {
-  keywordFilter.value = "";
-  statusFilter.value = "";
-  startTimeFilter.value = "";
-  endTimeFilter.value = "";
-  appliedFilters.value = {
-    keyword: "",
-    status: "",
-    startTime: "",
-    endTime: "",
-  };
-  selectedLogId.value = null;
-  selectedLog.value = null;
-  analysisResult.value = null;
-  await loadLogs();
-}
-
-function formatJson(value) {
-  if (!value) {
-    return "";
-  }
-
-  if (typeof value === "string") {
-    return value;
-  }
-
-  return JSON.stringify(value, null, 2);
-}
-
-function formatBytes(value) {
-  if (!value) {
-    return "0 B";
-  }
-
-  if (value < 1024) {
-    return `${value} B`;
-  }
-
-  return `${(value / 1024).toFixed(1)} KB`;
-}
-
-function formatDate(value) {
-  if (!value) {
-    return "-";
-  }
-
-  return new Date(value).toLocaleString();
-}
-
-function splitItems(text) {
-  if (!text) return [];
-  return text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
-}
 
 function normalizeIssueTitle(message) {
   return message
@@ -593,82 +75,205 @@ function normalizeIssueTitle(message) {
 }
 
 function rankLevel(level) {
-  const levelRanks = {
-    CRITICAL: 5,
-    FATAL: 5,
-    ERROR: 4,
-    WARN: 3,
-    WARNING: 3,
-    INFO: 2,
-    DEBUG: 1,
-    TRACE: 1,
-  };
-
-  return levelRanks[(level || "").toUpperCase()] || 0;
+  const ranks = { CRITICAL: 5, FATAL: 5, ERROR: 4, WARN: 3, WARNING: 3, INFO: 2, DEBUG: 1, TRACE: 1 };
+  return ranks[(level || "").toUpperCase()] || 0;
 }
 
 function topExtractedValues(entries, extractor) {
   const counts = new Map();
-
   for (const entry of entries) {
     const value = extractor(entry);
     if (!value) continue;
     counts.set(value, (counts.get(value) || 0) + 1);
   }
-
-  return Array.from(counts.entries())
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 6);
+  return Array.from(counts.entries()).map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count).slice(0, 6);
 }
 
 function extractServiceName(message) {
-  const serviceMatch = message.match(/\b(?:service|module|component|logger|app)[=:]\s*([\w.-]+)/i);
-  if (serviceMatch) return serviceMatch[1];
-
-  const bracketMatch = message.match(/\[([a-z][\w.-]{2,})\]/i);
-  return bracketMatch ? bracketMatch[1] : "";
+  const m = message.match(/\b(?:service|module|component|logger|app)[=:]\s*([\w.-]+)/i);
+  if (m) return m[1];
+  const b = message.match(/\[([a-z][\w.-]{2,})\]/i);
+  return b ? b[1] : "";
 }
 
 function extractRequestId(message) {
-  const match = message.match(/\b(?:request[_-]?id|trace[_-]?id|rid|txid)[=:]\s*([\w.-]+)/i);
-  return match ? match[1] : "";
+  const m = message.match(/\b(?:request[_-]?id|trace[_-]?id|rid|txid)[=:]\s*([\w.-]+)/i);
+  return m ? m[1] : "";
 }
 
 function topKeywordHits(entries) {
   const keywordMap = [
-    ["timeout", "请求超时"],
-    ["exception", "异常抛出"],
-    ["connection", "连接问题"],
-    ["database", "数据库"],
-    ["postgres", "PostgreSQL"],
-    ["redis", "Redis"],
-    ["cache", "缓存"],
-    ["memory", "内存"],
-    ["disk", "磁盘"],
-    ["unauthorized", "鉴权失败"],
-    ["5\\d{2}", "HTTP 5xx"],
+    ["timeout", "请求超时"], ["exception", "异常抛出"], ["connection", "连接问题"],
+    ["database", "数据库"], ["postgres", "PostgreSQL"], ["redis", "Redis"],
+    ["cache", "缓存"], ["memory", "内存"], ["disk", "磁盘"],
+    ["unauthorized", "鉴权失败"], ["5\\d{2}", "HTTP 5xx"],
   ];
   const counts = new Map();
-
   for (const entry of entries) {
     for (const [pattern, label] of keywordMap) {
-      if (new RegExp(pattern, "i").test(entry.message)) {
-        counts.set(label, (counts.get(label) || 0) + 1);
-      }
+      if (new RegExp(pattern, "i").test(entry.message)) counts.set(label, (counts.get(label) || 0) + 1);
     }
   }
+  return Array.from(counts.entries()).map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count).slice(0, 6);
+}
 
-  return Array.from(counts.entries())
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 6);
+const diagnosisMetrics = computed(() => {
+  const total = selectedLog.value?.total_parsed_entries || selectedEntries.value.length;
+  const errors = selectedLog.value?.total_error_count || 0;
+  const warnings = selectedLog.value?.total_warn_count || 0;
+  const keyCount = errors + warnings;
+  const riskLevel = errors > 0 ? "严重" : warnings > 0 ? "关注" : "平稳";
+  return [
+    { label: "风险等级", value: riskLevel },
+    { label: "关键事件", value: keyCount },
+    { label: "异常占比", value: total ? `${Math.round((keyCount / total) * 100)}%` : "0%" },
+    { label: "主要问题", value: highFrequencyExceptions.value[0]?.title || "未发现高频异常" },
+  ];
+});
+
+const highFrequencyExceptions = computed(() => {
+  const groups = new Map();
+  for (const entry of keyEntries.value) {
+    const title = normalizeIssueTitle(entry.message);
+    const current = groups.get(title) || { title, count: 0, level: entry.level || "-", firstLine: entry.line_number, lastLine: entry.line_number };
+    current.count += 1;
+    current.lastLine = entry.line_number;
+    if (rankLevel(entry.level) > rankLevel(current.level)) current.level = entry.level;
+    groups.set(title, current);
+  }
+  return Array.from(groups.values()).sort((a, b) => b.count - a.count || rankLevel(b.level) - rankLevel(a.level)).slice(0, 6);
+});
+
+const keyInformationGroups = computed(() => [
+  { title: "涉及服务", items: topExtractedValues(selectedEntries.value, (e) => e.service_name || extractServiceName(e.message)), empty: "未识别到服务名" },
+  { title: "请求链路", items: topExtractedValues(selectedEntries.value, (e) => extractRequestId(e.message)), empty: "未识别到请求 ID" },
+  { title: "问题关键词", items: topKeywordHits(keyEntries.value), empty: "未识别到明显关键词" },
+]);
+
+const keyEventTimeline = computed(() => keyEntries.value.slice(0, 8));
+
+async function checkHealth() {
+  try { health.value = await requestApi("/health"); } catch { health.value = null; }
+}
+
+async function loadLogs() {
+  if (!isAuthenticated.value) { logs.value = []; return; }
+  logsLoading.value = true;
+  try {
+    const data = await requestApi(`/logs${buildLogQuery()}`);
+    logs.value = data.items || [];
+    if (selectedLogId.value) {
+      if (!logs.value.some((log) => log.id === selectedLogId.value)) {
+        selectedLogId.value = null;
+        selectedLog.value = null;
+        analysisResult.value = null;
+      }
+    }
+  } catch { logs.value = []; } finally { logsLoading.value = false; }
+}
+
+async function loadLogDetail(logId = selectedLogId.value) {
+  if (!isAuthenticated.value || !logId) return;
+  selectedLogLoading.value = true;
+  selectedLogId.value = Number(logId);
+  try {
+    selectedLog.value = await requestApi(`/logs/${selectedLogId.value}?page=${entriesPage.value}&per_page=${entriesPerPage}`);
+    entriesTotalPages.value = selectedLog.value?.total_pages || 1;
+  } catch { selectedLog.value = null; } finally { selectedLogLoading.value = false; }
+}
+
+async function goToEntriesPage(page) {
+  entriesPage.value = page;
+  await loadLogDetail();
+}
+
+async function loadAnalysisHistory(logId = selectedLogId.value) {
+  if (!isAuthenticated.value || !logId) { analysisHistory.value = []; return; }
+  analysisHistoryLoading.value = true;
+  try { const data = await requestApi(`/logs/${logId}/analyses`); analysisHistory.value = data.items || []; }
+  catch { analysisHistory.value = []; } finally { analysisHistoryLoading.value = false; }
+}
+
+async function selectLog(logId) {
+  analysisResult.value = null;
+  entriesPage.value = 1;
+  await loadLogDetail(logId);
+  await loadAnalysisHistory(logId);
+  activeView.value = "detail";
+}
+
+function backToWorkspace() { activeView.value = "workspace"; }
+
+async function analyzeLog(logId = selectedLogId.value) {
+  if (!isAuthenticated.value || !logId) return;
+  if (!aiConfigured.value) { errorMessage.value = "AI 分析未配置：请在 .env 中设置 DEEPSEEK_API_KEY 后重启服务。"; return; }
+  stopPolling();
+  analysisLoading.value = true;
+  analysisStatus.value = "pending";
+  analysisResult.value = null;
+  selectedLogId.value = Number(logId);
+  try { await requestApi(`/logs/${selectedLogId.value}/analyze`, { method: "POST" }); startPolling(selectedLogId.value); }
+  catch { analysisLoading.value = false; analysisStatus.value = ""; }
+}
+
+function startPolling(logId) {
+  stopPolling();
+  pollAnalysisStatus(logId);
+  analysisPollTimer.value = setInterval(() => pollAnalysisStatus(logId), 2000);
+}
+
+function stopPolling() {
+  if (analysisPollTimer.value) { clearInterval(analysisPollTimer.value); analysisPollTimer.value = null; }
+}
+
+async function pollAnalysisStatus(logId) {
+  try {
+    const data = await requestApi(`/logs/${logId}/analyze/status`);
+    analysisStatus.value = data.status;
+    if (data.status === "completed") {
+      stopPolling();
+      analysisLoading.value = false;
+      analysisResult.value = { summary: data.summary, causes: data.causes, suggestions: data.suggestions };
+      await loadLogs(); await loadLogDetail(logId); await loadAnalysisHistory(logId);
+    } else if (data.status === "failed") {
+      stopPolling(); analysisLoading.value = false; analysisStatus.value = "failed";
+      errorMessage.value = data.error || "分析失败，请重试。";
+    } else if (data.status === "none") {
+      stopPolling(); analysisLoading.value = false; analysisStatus.value = "";
+      errorMessage.value = "没有找到当前日志的分析任务，请重新点击分析。";
+    }
+  } catch { stopPolling(); analysisLoading.value = false; analysisStatus.value = ""; }
+}
+
+function logout() {
+  authLogout(() => {
+    logs.value = [];
+    selectedLogId.value = null;
+    selectedLog.value = null;
+    analysisResult.value = null;
+    analysisHistory.value = [];
+    uploadResult.value = null;
+    authResult.value = null;
+  });
 }
 
 onMounted(async () => {
   await checkHealth();
-  await restoreSession();
+  await restoreSession(async () => {
+    token.value = "";
+    activeView.value = "workspace";
+    await loadLogs();
+  });
 });
+
+async function onFormSubmitAuth() {
+  await submitAuth(async (accessToken) => {
+    token.value = accessToken;
+    currentEmail.value = authEmail.value;
+    activeView.value = "workspace";
+    await loadLogs();
+  });
+}
 </script>
 
 <template>
@@ -706,7 +311,7 @@ onMounted(async () => {
       <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
       <p v-if="authNotice" class="notice-banner">{{ authNotice }}</p>
 
-      <form class="auth-form" @submit.prevent="submitAuth">
+      <form class="auth-form" @submit.prevent="onFormSubmitAuth">
         <label class="field-label" for="email">邮箱</label>
         <input id="email" v-model="authEmail" type="email" autocomplete="email" />
 
@@ -1095,6 +700,12 @@ onMounted(async () => {
                   </tr>
                 </tbody>
               </table>
+            </div>
+
+            <div v-if="entriesTotalPages > 1" class="pagination">
+              <button class="secondary-button" type="button" :disabled="entriesPage <= 1" @click="goToEntriesPage(entriesPage - 1)">上一页</button>
+              <span class="pagination-info">{{ entriesPage }} / {{ entriesTotalPages }}</span>
+              <button class="secondary-button" type="button" :disabled="entriesPage >= entriesTotalPages" @click="goToEntriesPage(entriesPage + 1)">下一页</button>
             </div>
 
             <p v-if="!selectedLog" class="empty-state">未选择日志</p>

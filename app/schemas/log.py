@@ -56,6 +56,10 @@ class LogDetailResponse(BaseModel):
     total_parsed_entries: int
     total_error_count: int
     total_warn_count: int
+    total_entries: int
+    page: int
+    per_page: int
+    total_pages: int
 
 
 class AnalyzeResponse(BaseModel):

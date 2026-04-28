@@ -189,10 +189,12 @@ class LogService:
         level: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
+        page: int = 1,
+        per_page: int = 50,
     ) -> LogDetailResponse:
         initialize_database()
         log = self._get_log_row(user_local_id, user)
-        entries = self._get_entry_rows(log["id"], keyword, level, start_time, end_time)
+        entries, total_entries = self._get_entry_rows(log["id"], keyword, level, start_time, end_time, page, per_page)
         total_stats = self._get_log_stats(log["id"])
 
         return LogDetailResponse(
@@ -210,6 +212,10 @@ class LogService:
             total_parsed_entries=total_stats["parsed_entries"],
             total_error_count=total_stats["error_count"],
             total_warn_count=total_stats["warn_count"],
+            total_entries=total_entries,
+            page=page,
+            per_page=per_page,
+            total_pages=max(1, -(-total_entries // per_page)),
         )
 
     def analyze(self, user_local_id: int, user: User) -> AnalyzeResponse:
@@ -320,7 +326,9 @@ class LogService:
         level: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
-    ) -> list[dict[str, Any]]:
+        page: int = 1,
+        per_page: int = 50,
+    ) -> tuple[list[dict[str, Any]], int]:
         where_clauses = ["log_id = %s"]
         params: list[Any] = [log_id]
 
@@ -342,17 +350,26 @@ class LogService:
             where_clauses.append("event_time <= %s")
             params.append(parsed_end)
 
+        offset = (page - 1) * per_page
+
         with get_connection() as connection:
-            return connection.execute(
+            total = connection.execute(
+                f"SELECT COUNT(*) AS cnt FROM log_entries WHERE {' AND '.join(where_clauses)}",
+                tuple(params),
+            ).fetchone()["cnt"]
+
+            rows = connection.execute(
                 f"""
                 SELECT id, line_number, timestamp_text, level, service_name, message, is_key_event
                 FROM log_entries
                 WHERE {" AND ".join(where_clauses)}
                 ORDER BY line_number ASC
-                LIMIT 500
+                LIMIT %s OFFSET %s
                 """,
-                tuple(params),
+                tuple(params + [per_page, offset]),
             ).fetchall()
+
+        return rows, total
 
     def _get_log_stats(self, log_id: int) -> dict[str, int]:
         with get_connection() as connection:
