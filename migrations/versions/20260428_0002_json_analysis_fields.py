@@ -16,7 +16,8 @@ def upgrade() -> None:
         """
         UPDATE analysis_records
         SET causes = to_jsonb(
-            array_remove(ARRAY(SELECT trim(x) FROM unnest(string_to_array(causes, E'\\n\\n')) AS x), ''), 1)
+            array_remove(string_to_array(causes, E'\\n\\n'), '')
+        )
         WHERE causes IS NOT NULL AND causes != ''
         """
     )
@@ -24,7 +25,8 @@ def upgrade() -> None:
         """
         UPDATE analysis_records
         SET suggestions = to_jsonb(
-            array_remove(ARRAY(SELECT trim(x) FROM unnest(string_to_array(suggestions, E'\\n\\n')) AS x), ''), 1)
+            array_remove(string_to_array(suggestions, E'\\n\\n'), '')
+        )
         WHERE suggestions IS NOT NULL AND suggestions != ''
         """
     )
