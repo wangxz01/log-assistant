@@ -1,3 +1,4 @@
+import json
 import logging
 import uuid
 from typing import Any
@@ -95,7 +96,7 @@ def run_task(task_id: str) -> None:
                 INSERT INTO analysis_records (log_id, user_id, summary, causes, suggestions)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
-                (log_id, user_id, result["summary"], result["causes"], result["suggestions"]),
+                (log_id, user_id, result["summary"], json.dumps(result["causes"]), json.dumps(result["suggestions"])),
             )
 
         r.hset(
@@ -103,8 +104,8 @@ def run_task(task_id: str) -> None:
             mapping={
                 "status": "completed",
                 "summary": result["summary"],
-                "causes": result["causes"],
-                "suggestions": result["suggestions"],
+                "causes": json.dumps(result["causes"]),
+                "suggestions": json.dumps(result["suggestions"]),
             },
         )
 

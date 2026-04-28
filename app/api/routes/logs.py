@@ -10,6 +10,7 @@ from app.schemas.log import (
     LogDetailResponse,
     LogListResponse,
     LogUploadResponse,
+    StatsResponse,
 )
 from app.services.log_service import log_service
 
@@ -38,11 +39,12 @@ def list_logs(
     keyword: str | None = Query(default=None),
     level: str | None = Query(default=None),
     log_status: str | None = Query(default=None, alias="status"),
+    service: str | None = Query(default=None),
     start_time: str | None = Query(default=None),
     end_time: str | None = Query(default=None),
     current_user: User = Depends(get_current_user),
 ) -> LogListResponse:
-    return log_service.list_logs(current_user, keyword, level, log_status, start_time, end_time)
+    return log_service.list_logs(current_user, keyword, level, log_status, service, start_time, end_time)
 
 
 @router.get("/{log_id}", response_model=LogDetailResponse)
@@ -50,13 +52,14 @@ def get_log(
     log_id: int,
     keyword: str | None = Query(default=None),
     level: str | None = Query(default=None),
+    service: str | None = Query(default=None),
     start_time: str | None = Query(default=None),
     end_time: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
 ) -> LogDetailResponse:
-    return log_service.get_log(log_id, current_user, keyword, level, start_time, end_time, page, per_page)
+    return log_service.get_log(log_id, current_user, keyword, level, service, start_time, end_time, page, per_page)
 
 
 @router.post("/{log_id}/analyze", response_model=AnalyzeResponse)
@@ -81,3 +84,11 @@ def list_analyses(
     current_user: User = Depends(get_current_user),
 ) -> AnalysisHistoryResponse:
     return log_service.list_analyses(log_id, current_user)
+
+
+@router.get("/{log_id}/stats", response_model=StatsResponse)
+def get_log_stats(
+    log_id: int,
+    current_user: User = Depends(get_current_user),
+) -> StatsResponse:
+    return log_service.get_stats(log_id, current_user)

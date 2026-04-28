@@ -429,7 +429,7 @@ select {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -639,6 +639,69 @@ select {
   background: #f8fafc;
 }
 
+/* Stats charts */
+.stats-section {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.chart-bars {
+  display: grid;
+  gap: 6px;
+}
+
+.chart-row {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.chart-label {
+  overflow: hidden;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-bar-track {
+  min-height: 24px;
+  border-radius: 4px;
+  background: #edf2f7;
+}
+
+.chart-bar-fill {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: #2f7d68;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  transition: width 0.3s ease;
+}
+
+.bar-error, .bar-fatal, .bar-critical {
+  background: #c2410c;
+}
+
+.bar-warn, .bar-warning {
+  background: #d97706;
+}
+
+.bar-info {
+  background: #2563eb;
+}
+
+.bar-debug, .bar-trace {
+  background: #6b7280;
+}
+
 .issue-list {
   display: grid;
   gap: 8px;
@@ -844,6 +907,13 @@ tbody tr.key {
   white-space: normal;
 }
 
+mark {
+  background: #fef08a;
+  color: inherit;
+  padding: 1px 3px;
+  border-radius: 2px;
+}
+
 .tag {
   display: inline-flex;
   min-height: 26px;
@@ -995,7 +1065,8 @@ pre {
   .filter-grid,
   .diagnosis-metrics,
   .dashboard-grid,
-  .detail-meta {
+  .detail-meta,
+  .stats-section {
     grid-template-columns: 1fr;
   }
 

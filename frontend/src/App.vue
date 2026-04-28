@@ -22,6 +22,8 @@ const analysisHistoryLoading = ref(false);
 const entriesPage = ref(1);
 const entriesPerPage = 50;
 const entriesTotalPages = ref(1);
+const activeKeyword = ref("");
+const logStats = ref(null);
 
 const { token, errorMessage, lastResponse, requestApi } = useApi();
 const {
@@ -31,7 +33,7 @@ const {
 } = useAuth(requestApi);
 
 const {
-  keywordFilter, statusFilter, startTimeFilter, endTimeFilter,
+  keywordFilter, statusFilter, serviceFilter, startTimeFilter, endTimeFilter,
   appliedFilters, hasAppliedFilters, appliedFilterTags,
   buildLogQuery, applyFilters, clearFilters,
 } = useFilters(async () => {
@@ -62,6 +64,13 @@ const keyEntries = computed(() =>
     return entry.is_key_event || ["WARN", "ERROR", "FATAL", "CRITICAL"].includes(level);
   }),
 );
+
+function highlightText(text, keyword) {
+  if (!keyword || !text) return (text || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const safe = (text || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return safe.replace(new RegExp(`(${escaped})`, "gi"), "<mark>$1</mark>");
+}
 
 function normalizeIssueTitle(message) {
   return message
@@ -176,8 +185,13 @@ async function loadLogDetail(logId = selectedLogId.value) {
   if (!isAuthenticated.value || !logId) return;
   selectedLogLoading.value = true;
   selectedLogId.value = Number(logId);
+  activeKeyword.value = appliedFilters.value.keyword || "";
   try {
-    selectedLog.value = await requestApi(`/logs/${selectedLogId.value}?page=${entriesPage.value}&per_page=${entriesPerPage}`);
+    const params = new URLSearchParams({ page: entriesPage.value, per_page: entriesPerPage });
+    if (activeKeyword.value) params.set("keyword", activeKeyword.value);
+    const service = appliedFilters.value.service;
+    if (service) params.set("service", service);
+    selectedLog.value = await requestApi(`/logs/${selectedLogId.value}?${params}`);
     entriesTotalPages.value = selectedLog.value?.total_pages || 1;
   } catch { selectedLog.value = null; } finally { selectedLogLoading.value = false; }
 }
@@ -185,6 +199,17 @@ async function loadLogDetail(logId = selectedLogId.value) {
 async function goToEntriesPage(page) {
   entriesPage.value = page;
   await loadLogDetail();
+}
+
+async function loadLogStats(logId = selectedLogId.value) {
+  if (!isAuthenticated.value || !logId) return;
+  try { logStats.value = await requestApi(`/logs/${logId}/stats`, { silent: true }); }
+  catch { logStats.value = null; }
+}
+
+function barWidth(count, maxCount) {
+  const max = maxCount || 1;
+  return `${Math.max(8, Math.round((count / max) * 100))}%`;
 }
 
 async function loadAnalysisHistory(logId = selectedLogId.value) {
@@ -197,8 +222,10 @@ async function loadAnalysisHistory(logId = selectedLogId.value) {
 async function selectLog(logId) {
   analysisResult.value = null;
   entriesPage.value = 1;
+  logStats.value = null;
   await loadLogDetail(logId);
   await loadAnalysisHistory(logId);
+  loadLogStats(logId);
   activeView.value = "detail";
 }
 
@@ -498,6 +525,10 @@ async function onFormSubmitAuth() {
                 </select>
               </label>
               <label>
+                <span>服务/模块</span>
+                <input v-model="serviceFilter" type="search" placeholder="服务名关键词" />
+              </label>
+              <label>
                 <span>开始时间</span>
                 <input v-model="startTimeFilter" type="text" placeholder="" />
               </label>
@@ -610,6 +641,36 @@ async function onFormSubmitAuth() {
                 </div>
               </section>
 
+              <section v-if="logStats" class="stats-section">
+                <div class="analysis-card">
+                  <h3>级别分布</h3>
+                  <div class="chart-bars">
+                    <div v-for="item in logStats.level_distribution" :key="item.level" class="chart-row">
+                      <span class="chart-label">{{ item.level }}</span>
+                      <div class="chart-bar-track">
+                        <div
+                          class="chart-bar-fill"
+                          :class="`bar-${(item.level || '').toLowerCase()}`"
+                          :style="{ width: barWidth(item.count, logStats.level_distribution[0]?.count) }"
+                        >{{ item.count }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="analysis-card">
+                  <h3>服务/模块分布</h3>
+                  <div v-if="logStats.service_distribution.length === 0" class="inline-empty">未识别到服务名</div>
+                  <div v-else class="chart-bars">
+                    <div v-for="item in logStats.service_distribution" :key="item.service" class="chart-row">
+                      <span class="chart-label">{{ item.service }}</span>
+                      <div class="chart-bar-track">
+                        <div class="chart-bar-fill" :style="{ width: barWidth(item.count, logStats.service_distribution[0]?.count) }">{{ item.count }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
               <section class="dashboard-grid">
                 <div class="analysis-card">
                   <h3>高频异常统计</h3>
@@ -663,13 +724,13 @@ async function onFormSubmitAuth() {
                 <div class="analysis-card analysis-card-warn">
                   <h3>异常原因</h3>
                   <ul class="analysis-list">
-                    <li v-for="(item, i) in splitItems(analysisResult.causes)" :key="i">{{ item }}</li>
+                    <li v-for="(item, i) in (Array.isArray(analysisResult.causes) ? analysisResult.causes : [analysisResult.causes])" :key="`c-${i}`">{{ item }}</li>
                   </ul>
                 </div>
                 <div class="analysis-card analysis-card-ok">
                   <h3>排障建议</h3>
                   <ul class="analysis-list">
-                    <li v-for="(item, i) in splitItems(analysisResult.suggestions)" :key="i">{{ item }}</li>
+                    <li v-for="(item, i) in (Array.isArray(analysisResult.suggestions) ? analysisResult.suggestions : [analysisResult.suggestions])" :key="`s-${i}`">{{ item }}</li>
                   </ul>
                 </div>
               </section>
@@ -696,7 +757,7 @@ async function onFormSubmitAuth() {
                     <td>{{ entry.timestamp || "-" }}</td>
                     <td><span class="tag">{{ entry.level || "-" }}</span></td>
                     <td>{{ entry.service_name || "-" }}</td>
-                    <td>{{ entry.message }}</td>
+                    <td v-html="highlightText(entry.message, activeKeyword)"></td>
                   </tr>
                 </tbody>
               </table>

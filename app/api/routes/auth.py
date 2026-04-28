@@ -58,7 +58,7 @@ def _set_auth_cookies(response: Response, token_response: TokenResponse) -> None
         value=token_response.access_token,
         max_age=settings.access_token_expire_minutes * 60,
         httponly=True,
-        secure=False,
+        secure=settings.cookie_secure,
         samesite="lax",
         path="/",
     )
@@ -67,7 +67,7 @@ def _set_auth_cookies(response: Response, token_response: TokenResponse) -> None
         value=token_response.refresh_token,
         max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
         httponly=True,
-        secure=False,
+        secure=settings.cookie_secure,
         samesite="lax",
         path="/",
     )

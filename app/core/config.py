@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 14
     upload_dir: str = "assets/uploads"
+    max_upload_size: int = 10 * 1024 * 1024
+    allowed_extensions: str = ".log,.txt"
+    cookie_secure: bool = False
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    log_level: str = "INFO"
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"

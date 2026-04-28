@@ -19,7 +19,7 @@ SYSTEM_PROMPT = """\
 """
 
 
-def analyze_log_content(log_content: str) -> dict[str, str]:
+def analyze_log_content(log_content: str) -> dict[str, str | list[str]]:
     from openai import OpenAI
 
     client = OpenAI(
@@ -51,19 +51,19 @@ def analyze_log_content(log_content: str) -> dict[str, str]:
             logger.warning("Failed to parse AI response as JSON: %s", raw[:200])
             result = {
                 "summary": raw,
-                "causes": "AI 返回内容无法解析为结构化结果。",
-                "suggestions": "请重新尝试分析。",
+                "causes": ["AI 返回内容无法解析为结构化结果。"],
+                "suggestions": ["请重新尝试分析。"],
             }
 
-    def to_str(value):
+    def to_list(value):
         if isinstance(value, list):
-            return "\n\n".join(str(item).strip() for item in value if item)
+            return [str(item).strip() for item in value if item]
         if isinstance(value, str):
-            return value.strip()
-        return str(value) if value is not None else ""
+            return [line.strip() for line in value.split("\n") if line.strip()] or [value.strip()]
+        return [str(value)] if value is not None else []
 
     return {
-        "summary": to_str(result.get("summary", "")),
-        "causes": to_str(result.get("causes", "")),
-        "suggestions": to_str(result.get("suggestions", "")),
+        "summary": (result.get("summary") or "").strip() if isinstance(result.get("summary"), str) else str(result.get("summary", "")),
+        "causes": to_list(result.get("causes")),
+        "suggestions": to_list(result.get("suggestions")),
     }

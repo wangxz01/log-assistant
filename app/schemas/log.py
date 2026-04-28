@@ -72,18 +72,40 @@ class AnalyzeStatusResponse(BaseModel):
     task_id: str
     status: str
     summary: str | None = None
-    causes: str | None = None
-    suggestions: str | None = None
+    causes: list[str] | None = None
+    suggestions: list[str] | None = None
     error: str | None = None
 
 
 class AnalysisRecord(BaseModel):
     id: int
     summary: str
-    causes: str
-    suggestions: str
+    causes: list[str]
+    suggestions: list[str]
     analyzed_at: str
 
 
 class AnalysisHistoryResponse(BaseModel):
     items: list[AnalysisRecord]
+
+
+class LevelDistribution(BaseModel):
+    level: str
+    count: int
+
+
+class LevelTrendPoint(BaseModel):
+    time_bucket: str
+    level: str
+    count: int
+
+
+class ServiceDistribution(BaseModel):
+    service: str
+    count: int
+
+
+class StatsResponse(BaseModel):
+    level_distribution: list[LevelDistribution]
+    level_trend: list[LevelTrendPoint]
+    service_distribution: list[ServiceDistribution]

@@ -20,6 +20,7 @@ from app.schemas.log import (
     LogListResponse,
     LogSummary,
     LogUploadResponse,
+    StatsResponse,
 )
 
 
@@ -44,13 +45,38 @@ class LogService:
 
         file_bytes = await file.read()
         original_filename = Path(file.filename or "uploaded.log").name
+
+        if not file_bytes:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is empty.")
+
+        if len(file_bytes) > settings.max_upload_size:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File too large. Maximum size is {settings.max_upload_size // (1024 * 1024)} MB.",
+            )
+
+        ext = Path(original_filename).suffix.lower()
+        allowed = [e.strip().lower() for e in settings.allowed_extensions.split(",")]
+        if ext not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(allowed)}",
+            )
+
+        decoded = file_bytes.decode("utf-8", errors="replace")
+        replacement_count = decoded.count("�")
+        if replacement_count > len(decoded) * 0.3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File contains too many unrecognizable characters. Please upload a valid text file.",
+            )
         stored_filename = f"{uuid.uuid4().hex}_{original_filename}"
         upload_dir = Path(settings.upload_dir)
         upload_dir.mkdir(parents=True, exist_ok=True)
         storage_path = upload_dir / stored_filename
         storage_path.write_bytes(file_bytes)
 
-        entries = parse_log_entries(file_bytes.decode("utf-8", errors="replace"))
+        entries = parse_log_entries(decoded)
 
         with get_connection() as connection:
             max_row = connection.execute(
@@ -143,11 +169,12 @@ class LogService:
         keyword: str | None = None,
         level: str | None = None,
         status: str | None = None,
+        service: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
     ) -> LogListResponse:
         initialize_database()
-        where_clauses, params = self._build_log_filters(user, keyword, level, status, start_time, end_time)
+        where_clauses, params = self._build_log_filters(user, keyword, level, status, service, start_time, end_time)
 
         with get_connection() as connection:
             rows = connection.execute(
@@ -187,6 +214,7 @@ class LogService:
         user: User,
         keyword: str | None = None,
         level: str | None = None,
+        service: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
         page: int = 1,
@@ -194,7 +222,7 @@ class LogService:
     ) -> LogDetailResponse:
         initialize_database()
         log = self._get_log_row(user_local_id, user)
-        entries, total_entries = self._get_entry_rows(log["id"], keyword, level, start_time, end_time, page, per_page)
+        entries, total_entries = self._get_entry_rows(log["id"], keyword, level, service, start_time, end_time, page, per_page)
         total_stats = self._get_log_stats(log["id"])
 
         return LogDetailResponse(
@@ -256,12 +284,25 @@ class LogService:
         if not data:
             return AnalyzeStatusResponse(task_id=task_id, status="none")
 
+        import json as _json
+
+        def _parse_list(value):
+            if isinstance(value, list):
+                return value
+            if isinstance(value, str):
+                try:
+                    parsed = _json.loads(value)
+                    return parsed if isinstance(parsed, list) else [value]
+                except (_json.JSONDecodeError, ValueError):
+                    return [line.strip() for line in value.split("\n") if line.strip()] or [value]
+            return value
+
         return AnalyzeStatusResponse(
             task_id=task_id,
             status=data.get("status", "none"),
             summary=data.get("summary"),
-            causes=data.get("causes"),
-            suggestions=data.get("suggestions"),
+            causes=_parse_list(data.get("causes")) if data.get("causes") else None,
+            suggestions=_parse_list(data.get("suggestions")) if data.get("suggestions") else None,
             error=data.get("error"),
         )
 
@@ -324,6 +365,7 @@ class LogService:
         log_id: int,
         keyword: str | None = None,
         level: str | None = None,
+        service: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
         page: int = 1,
@@ -335,6 +377,10 @@ class LogService:
         if keyword:
             where_clauses.append("(message ILIKE %s OR service_name ILIKE %s)")
             params.extend([f"%{keyword}%", f"%{keyword}%"])
+
+        if service:
+            where_clauses.append("service_name ILIKE %s")
+            params.append(f"%{service}%")
 
         if level:
             where_clauses.append("level = %s")
@@ -397,6 +443,7 @@ class LogService:
         keyword: str | None,
         level: str | None,
         status: str | None,
+        service: str | None,
         start_time: str | None,
         end_time: str | None,
     ) -> tuple[list[str], list[Any]]:
@@ -428,6 +475,17 @@ class LogService:
                 """
             )
             params.append(_normalize_level(level))
+
+        if service:
+            where_clauses.append(
+                """
+                EXISTS (
+                    SELECT 1 FROM log_entries e
+                    WHERE e.log_id = l.id AND e.service_name ILIKE %s
+                )
+                """
+            )
+            params.append(f"%{service}%")
 
         if status:
             where_clauses.append("l.status = %s")
@@ -493,6 +551,47 @@ class LogService:
             return ""
 
         return path.read_text(encoding="utf-8", errors="replace")[:1000]
+
+    def get_stats(self, user_local_id: int, user: User) -> StatsResponse:
+        initialize_database()
+        log = self._get_log_row(user_local_id, user)
+        log_id = log["id"]
+
+        with get_connection() as connection:
+            level_rows = connection.execute(
+                "SELECT level, COUNT(*) AS count FROM log_entries WHERE log_id = %s GROUP BY level ORDER BY count DESC",
+                (log_id,),
+            ).fetchall()
+
+            trend_rows = connection.execute(
+                """
+                SELECT to_char(date_trunc('hour', event_time), 'YYYY-MM-DD"T"HH24:MI:00') AS time_bucket,
+                       level, COUNT(*) AS count
+                FROM log_entries
+                WHERE log_id = %s AND event_time IS NOT NULL
+                GROUP BY date_trunc('hour', event_time), level
+                ORDER BY time_bucket ASC, level ASC
+                """,
+                (log_id,),
+            ).fetchall()
+
+            service_rows = connection.execute(
+                """
+                SELECT COALESCE(service_name, '(unknown)') AS service, COUNT(*) AS count
+                FROM log_entries
+                WHERE log_id = %s
+                GROUP BY service_name
+                ORDER BY count DESC
+                LIMIT 10
+                """,
+                (log_id,),
+            ).fetchall()
+
+        return StatsResponse(
+            level_distribution=[{"level": r["level"] or "UNKNOWN", "count": r["count"]} for r in level_rows],
+            level_trend=[{"time_bucket": r["time_bucket"], "level": r["level"] or "UNKNOWN", "count": r["count"]} for r in trend_rows],
+            service_distribution=[{"service": r["service"], "count": r["count"]} for r in service_rows],
+        )
 
 
 def parse_log_entries(content: str) -> list[dict[str, Any]]:

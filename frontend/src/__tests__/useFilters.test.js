@@ -15,7 +15,6 @@ describe("useFilters", () => {
   it("builds query string with keyword", () => {
     const { keywordFilter, applyFilters, buildLogQuery } = useFilters();
     keywordFilter.value = "timeout";
-    // applyFilters sets appliedFilters synchronously
     applyFilters();
     expect(buildLogQuery()).toContain("keyword=timeout");
   });
@@ -27,18 +26,27 @@ describe("useFilters", () => {
     expect(buildLogQuery()).toContain("status=analyzed");
   });
 
+  it("builds query string with service", () => {
+    const { serviceFilter, applyFilters, buildLogQuery } = useFilters();
+    serviceFilter.value = "payment";
+    applyFilters();
+    expect(buildLogQuery()).toContain("service=payment");
+  });
+
   it("generates correct filter tags", () => {
-    const { keywordFilter, statusFilter, applyFilters, appliedFilterTags } = useFilters();
+    const { keywordFilter, statusFilter, serviceFilter, applyFilters, appliedFilterTags } = useFilters();
     keywordFilter.value = "error";
     statusFilter.value = "parsed";
+    serviceFilter.value = "auth";
     applyFilters();
-    expect(appliedFilterTags.value).toEqual(["关键词：error", "状态：parsed"]);
+    expect(appliedFilterTags.value).toEqual(["关键词：error", "状态：parsed", "服务：auth"]);
   });
 
   it("clears all filters", async () => {
-    const { keywordFilter, statusFilter, applyFilters, clearFilters, hasAppliedFilters } = useFilters();
+    const { keywordFilter, statusFilter, serviceFilter, applyFilters, clearFilters, hasAppliedFilters } = useFilters();
     keywordFilter.value = "test";
     statusFilter.value = "parsed";
+    serviceFilter.value = "api";
     await applyFilters();
     expect(hasAppliedFilters.value).toBe(true);
 
@@ -46,5 +54,6 @@ describe("useFilters", () => {
     expect(hasAppliedFilters.value).toBe(false);
     expect(keywordFilter.value).toBe("");
     expect(statusFilter.value).toBe("");
+    expect(serviceFilter.value).toBe("");
   });
 });
