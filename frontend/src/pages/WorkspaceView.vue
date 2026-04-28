@@ -20,6 +20,9 @@ defineProps({
   serviceFilter: String,
   startTimeFilter: String,
   endTimeFilter: String,
+  logsPage: Number,
+  logsTotalPages: Number,
+  logsTotal: Number,
 });
 
 defineEmits([
@@ -38,6 +41,7 @@ defineEmits([
   "update:serviceFilter",
   "update:startTimeFilter",
   "update:endTimeFilter",
+  "go-logs-page",
 ]);
 </script>
 
@@ -178,11 +182,11 @@ defineEmits([
           </label>
           <label>
             <span>开始时间</span>
-            <input :value="startTimeFilter" type="text" placeholder="" @input="$emit('update:startTimeFilter', $event.target.value)" />
+            <input :value="startTimeFilter" type="datetime-local" @input="$emit('update:startTimeFilter', $event.target.value)" />
           </label>
           <label>
             <span>结束时间</span>
-            <input :value="endTimeFilter" type="text" placeholder="" @input="$emit('update:endTimeFilter', $event.target.value)" />
+            <input :value="endTimeFilter" type="datetime-local" @input="$emit('update:endTimeFilter', $event.target.value)" />
           </label>
         </div>
 
@@ -227,6 +231,12 @@ defineEmits([
         <p v-if="logs.length === 0" class="empty-state">
           {{ hasAppliedFilters ? "当前筛选条件没有匹配日志" : "暂无日志" }}
         </p>
+
+        <div v-if="logsTotalPages > 1" class="pagination">
+          <button class="secondary-button" type="button" :disabled="logsPage <= 1" @click="$emit('go-logs-page', logsPage - 1)">上一页</button>
+          <span class="pagination-info">{{ logsPage }} / {{ logsTotalPages }}（{{ logsTotal }} 条）</span>
+          <button class="secondary-button" type="button" :disabled="logsPage >= logsTotalPages" @click="$emit('go-logs-page', logsPage + 1)">下一页</button>
+        </div>
       </section>
     </section>
   </section>

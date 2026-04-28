@@ -1,5 +1,11 @@
 <script setup>
+import { ref } from "vue";
 import { formatDate } from "../composables/useFormat.js";
+
+const newRuleName = ref("");
+const newRuleLevel = ref("");
+const newRuleKeyword = ref("");
+const newRuleThreshold = ref(1);
 
 defineProps({
   selectedLog: Object,
@@ -18,6 +24,8 @@ defineProps({
   highFrequencyExceptions: Array,
   keyInformationGroups: Array,
   keyEventTimeline: Array,
+  alertRules: Array,
+  alertResults: Object,
 });
 
 defineEmits([
@@ -27,6 +35,9 @@ defineEmits([
   "export-analysis",
   "export-entries",
   "select-history",
+  "create-alert",
+  "delete-alert",
+  "eval-alerts",
 ]);
 
 function highlightText(text, keyword) {
@@ -176,6 +187,43 @@ function barWidth(count, maxCount) {
                 </div>
               </article>
             </div>
+          </section>
+
+          <section class="analysis-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <h3 style="margin:0">告警规则</h3>
+              <button class="secondary-button" type="button" @click="$emit('eval-alerts')" :disabled="!selectedLogId">评估规则</button>
+            </div>
+
+            <div v-if="alertResults?.alerts?.length" style="margin-top:10px;display:grid;gap:6px;">
+              <div v-for="a in alertResults.alerts" :key="a.rule_id" class="alert-eval" :class="{ triggered: a.triggered }">
+                {{ a.message }}
+              </div>
+            </div>
+
+            <div style="margin-top:10px;display:grid;gap:6px;">
+              <div v-for="rule in alertRules" :key="rule.id" class="alert-rule-row">
+                <div>
+                  <strong>{{ rule.name }}</strong>
+                  <span v-if="rule.condition_level"> 级别={{ rule.condition_level }}</span>
+                  <span v-if="rule.condition_keyword"> 关键词={{ rule.condition_keyword }}</span>
+                  <span v-if="rule.condition_service"> 服务={{ rule.condition_service }}</span>
+                  <span> 阈值={{ rule.threshold }}</span>
+                </div>
+                <button class="secondary-button" type="button" @click="$emit('delete-alert', rule.id)">删除</button>
+              </div>
+              <p v-if="!alertRules?.length" class="inline-empty">暂无告警规则</p>
+            </div>
+
+            <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+              <input v-model="newRuleName" type="text" placeholder="规则名称" />
+              <input v-model="newRuleLevel" type="text" placeholder="级别 (如 ERROR)" />
+              <input v-model="newRuleKeyword" type="text" placeholder="关键词 (可选)" />
+              <input v-model.number="newRuleThreshold" type="number" placeholder="阈值" min="1" />
+            </div>
+            <button class="primary-button" type="button" style="margin-top:8px;width:100%" @click="$emit('create-alert', { name: newRuleName, condition_level: newRuleLevel || null, condition_keyword: newRuleKeyword || null, threshold: newRuleThreshold || 1, enabled: true }); newRuleName=''; newRuleLevel=''; newRuleKeyword=''; newRuleThreshold=1;">
+              添加规则
+            </button>
           </section>
 
           <section v-if="analysisResult" class="ai-result-grid">

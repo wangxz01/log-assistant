@@ -11,6 +11,7 @@ import DetailView from "./pages/DetailView.vue";
 import ResponseView from "./pages/ResponseView.vue";
 
 const activeView = ref("workspace");
+const darkMode = ref(false);
 const health = ref(null);
 const logs = ref([]);
 const logsLoading = ref(false);
@@ -28,6 +29,12 @@ const entriesPerPage = 50;
 const entriesTotalPages = ref(1);
 const activeKeyword = ref("");
 const logStats = ref(null);
+const alertRules = ref([]);
+const alertResults = ref(null);
+const logsPage = ref(1);
+const logsPerPage = 20;
+const logsTotalPages = ref(1);
+const logsTotal = ref(0);
 
 const { token, errorMessage, lastResponse, requestApi } = useApi();
 const {
@@ -44,6 +51,7 @@ const {
   selectedLogId.value = null;
   selectedLog.value = null;
   analysisResult.value = null;
+  logsPage.value = 1;
   await loadLogs();
 });
 
@@ -166,8 +174,12 @@ async function loadLogs() {
   if (!isAuthenticated.value) { logs.value = []; return; }
   logsLoading.value = true;
   try {
-    const data = await requestApi(`/logs${buildLogQuery()}`);
+    const qs = buildLogQuery();
+    const sep = qs ? "&" : "?";
+    const data = await requestApi(`/logs${qs}${sep}page=${logsPage.value}&per_page=${logsPerPage}`);
     logs.value = data.items || [];
+    logsTotal.value = data.total || 0;
+    logsTotalPages.value = data.total_pages || 1;
     if (selectedLogId.value) {
       if (!logs.value.some((log) => log.id === selectedLogId.value)) {
         selectedLogId.value = null;
@@ -200,10 +212,37 @@ async function goToEntriesPage(page) {
   await loadLogDetail();
 }
 
+async function goToLogsPage(page) {
+  logsPage.value = page;
+  await loadLogs();
+}
+
 async function loadLogStats(logId = selectedLogId.value) {
   if (!isAuthenticated.value || !logId) return;
   try { logStats.value = await requestApi(`/logs/${logId}/stats`, { silent: true }); }
   catch { logStats.value = null; }
+}
+
+async function loadAlertRules() {
+  if (!isAuthenticated.value) { alertRules.value = []; return; }
+  try { const data = await requestApi("/logs/alerts/rules", { silent: true }); alertRules.value = data.items || []; }
+  catch { alertRules.value = []; }
+}
+
+async function createAlertRule(rule) {
+  try { await requestApi("/logs/alerts/rules", { method: "POST", body: JSON.stringify(rule), headers: { "Content-Type": "application/json" } }); await loadAlertRules(); }
+  catch { errorMessage.value = "创建规则失败。"; }
+}
+
+async function deleteAlertRule(ruleId) {
+  try { await requestApi(`/logs/alerts/rules/${ruleId}`, { method: "DELETE" }); await loadAlertRules(); }
+  catch { errorMessage.value = "删除规则失败。"; }
+}
+
+async function evaluateAlerts() {
+  if (!selectedLogId.value) return;
+  try { alertResults.value = await requestApi(`/logs/${selectedLogId.value}/alerts/eval`); }
+  catch { alertResults.value = null; }
 }
 
 async function loadAnalysisHistory(logId = selectedLogId.value) {
@@ -220,6 +259,7 @@ async function selectLog(logId) {
   await loadLogDetail(logId);
   await loadAnalysisHistory(logId);
   loadLogStats(logId);
+  loadAlertRules();
   activeView.value = "detail";
 }
 
@@ -238,12 +278,59 @@ async function analyzeLog() {
 
 function startPolling(logId) {
   stopPolling();
-  pollAnalysisStatus(logId);
-  analysisPollTimer.value = setInterval(() => pollAnalysisStatus(logId), 2000);
+
+  const apiBase = import.meta.env.VITE_API_BASE_URL || "/api";
+  const wsBase = new URL(apiBase, window.location.origin);
+  const wsProto = wsBase.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${wsProto}//${wsBase.host}${wsBase.pathname}/logs/${logId}/analyze/ws?token=${encodeURIComponent(token.value)}`;
+
+  try {
+    const ws = new WebSocket(wsUrl);
+    analysisPollTimer.value = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        analysisStatus.value = data.status;
+        if (data.status === "completed") {
+          stopPolling();
+          analysisLoading.value = false;
+          requestApi(`/logs/${logId}/analyze/status`).then((full) => {
+            analysisResult.value = { summary: full.summary, causes: full.causes, suggestions: full.suggestions };
+          });
+          loadLogs(); loadLogDetail(logId); loadAnalysisHistory(logId);
+        } else if (data.status === "failed") {
+          stopPolling();
+          analysisLoading.value = false;
+          errorMessage.value = "分析失败，请重试。";
+        } else if (data.status === "error") {
+          stopPolling();
+          analysisLoading.value = false;
+          errorMessage.value = data.error || "连接失败。";
+        }
+      } catch { /* ignore parse errors */ }
+    };
+
+    ws.onerror = () => {
+      stopPolling();
+      pollAnalysisStatus(logId);
+      analysisPollTimer.value = setInterval(() => pollAnalysisStatus(logId), 2000);
+    };
+  } catch {
+    pollAnalysisStatus(logId);
+    analysisPollTimer.value = setInterval(() => pollAnalysisStatus(logId), 2000);
+  }
 }
 
 function stopPolling() {
-  if (analysisPollTimer.value) { clearInterval(analysisPollTimer.value); analysisPollTimer.value = null; }
+  if (analysisPollTimer.value) {
+    if (typeof analysisPollTimer.value === "object" && analysisPollTimer.value instanceof WebSocket) {
+      analysisPollTimer.value.close();
+    } else {
+      clearInterval(analysisPollTimer.value);
+    }
+    analysisPollTimer.value = null;
+  }
 }
 
 async function pollAnalysisStatus(logId) {
@@ -300,6 +387,12 @@ function downloadText(filename, content) {
   URL.revokeObjectURL(url);
 }
 
+function toggleDarkMode() {
+  darkMode.value = !darkMode.value;
+  document.documentElement.setAttribute("data-theme", darkMode.value ? "dark" : "light");
+  localStorage.setItem("theme", darkMode.value ? "dark" : "light");
+}
+
 function logout() {
   authLogout(() => {
     logs.value = [];
@@ -313,6 +406,11 @@ function logout() {
 }
 
 onMounted(async () => {
+  const saved = localStorage.getItem("theme");
+  if (saved === "dark" || (!saved && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+    darkMode.value = true;
+    document.documentElement.setAttribute("data-theme", "dark");
+  }
   await checkHealth();
   await restoreSession(async () => {
     token.value = "";
@@ -380,6 +478,7 @@ async function onFormSubmitAuth() {
       <div class="connection-panel">
         <span class="status-dot" :class="{ online: health?.status === 'ok' }"></span>
         <span>{{ apiStatusText }}</span>
+        <button class="theme-toggle" type="button" @click="toggleDarkMode">{{ darkMode ? "☀" : "☾" }}</button>
       </div>
     </aside>
 
@@ -417,6 +516,9 @@ async function onFormSubmitAuth() {
         :service-filter="serviceFilter"
         :start-time-filter="startTimeFilter"
         :end-time-filter="endTimeFilter"
+        :logs-page="logsPage"
+        :logs-total-pages="logsTotalPages"
+        :logs-total="logsTotal"
         @select-log="selectLog"
         @submit-upload="submitUpload"
         @file-change="onFileChange"
@@ -432,6 +534,7 @@ async function onFormSubmitAuth() {
         @update:service-filter="serviceFilter = $event"
         @update:start-time-filter="startTimeFilter = $event"
         @update:end-time-filter="endTimeFilter = $event"
+        @go-logs-page="goToLogsPage"
       />
 
       <DetailView
@@ -452,12 +555,17 @@ async function onFormSubmitAuth() {
         :high-frequency-exceptions="highFrequencyExceptions"
         :key-information-groups="keyInformationGroups"
         :key-event-timeline="keyEventTimeline"
+        :alert-rules="alertRules"
+        :alert-results="alertResults"
         @analyze="analyzeLog"
         @back="backToWorkspace"
         @go-page="goToEntriesPage"
         @export-analysis="exportAnalysis"
         @export-entries="exportEntries"
         @select-history="analysisResult = $event"
+        @create-alert="createAlertRule"
+        @delete-alert="deleteAlertRule"
+        @eval-alerts="evaluateAlerts"
       />
 
       <ResponseView

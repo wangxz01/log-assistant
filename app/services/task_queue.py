@@ -11,10 +11,19 @@ logger = logging.getLogger(__name__)
 
 TASK_TTL = 86400  # 24 hours
 TASK_QUEUE_KEY = "analysis_tasks"
+TASK_EVENTS_KEY = "task_events"
 
 
 def _get_redis() -> redis.Redis:
     return redis.Redis.from_url(settings.redis_url, decode_responses=True)
+
+
+def _publish_event(task_id: str, status: str) -> None:
+    try:
+        r = _get_redis()
+        r.publish(TASK_EVENTS_KEY, json.dumps({"task_id": task_id, "status": status}))
+    except Exception:
+        logger.warning("Failed to publish task event for %s", task_id)
 
 
 def submit_task(log_id: int, user_id: int, user_local_id: int) -> str:
@@ -63,6 +72,7 @@ def run_task(task_id: str) -> None:
 
     try:
         r.hset(task_key, "status", "running")
+        _publish_event(task_id, "running")
 
         log_id = int(r.hget(task_key, "log_id"))
         user_id = int(r.hget(task_key, "user_id"))
@@ -108,7 +118,9 @@ def run_task(task_id: str) -> None:
                 "suggestions": json.dumps(result["suggestions"]),
             },
         )
+        _publish_event(task_id, "completed")
 
     except Exception:
         logger.exception("Task %s failed", task_id)
         r.hset(task_key, mapping={"status": "failed", "error": "Analysis failed. Please try again."})
+        _publish_event(task_id, "failed")

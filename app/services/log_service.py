@@ -10,6 +10,11 @@ from app.core.config import settings
 from app.core.database import get_connection, initialize_database
 from app.models.user import User
 from app.schemas.log import (
+    AlertEvalResponse,
+    AlertRule,
+    AlertRuleCreate,
+    AlertRuleEval,
+    AlertRuleListResponse,
     AnalysisHistoryResponse,
     AnalysisRecord,
     AnalyzeResponse,
@@ -176,11 +181,19 @@ class LogService:
         service: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
+        page: int = 1,
+        per_page: int = 20,
     ) -> LogListResponse:
         initialize_database()
         where_clauses, params = self._build_log_filters(user, keyword, level, status, service, start_time, end_time)
 
         with get_connection() as connection:
+            total = connection.execute(
+                f"SELECT COUNT(*) AS cnt FROM logs l JOIN users u ON u.id = l.user_id WHERE {' AND '.join(where_clauses)}",
+                tuple(params),
+            ).fetchone()["cnt"]
+
+            offset = (page - 1) * per_page
             rows = connection.execute(
                 f"""
                 SELECT
@@ -206,11 +219,18 @@ class LogService:
                 JOIN users u ON u.id = l.user_id
                 WHERE {" AND ".join(where_clauses)}
                 ORDER BY l.uploaded_at DESC, l.id DESC
+                LIMIT %s OFFSET %s
                 """,
-                tuple(params),
+                tuple(params + [per_page, offset]),
             ).fetchall()
 
-        return LogListResponse(items=[self._row_to_summary(row) for row in rows])
+        return LogListResponse(
+            items=[self._row_to_summary(row) for row in rows],
+            total=total,
+            page=page,
+            per_page=per_page,
+            total_pages=max(1, -(-total // per_page)),
+        )
 
     def get_log(
         self,
@@ -596,6 +616,84 @@ class LogService:
             level_trend=[{"time_bucket": r["time_bucket"], "level": r["level"] or "UNKNOWN", "count": r["count"]} for r in trend_rows],
             service_distribution=[{"service": r["service"], "count": r["count"]} for r in service_rows],
         )
+
+    def list_alert_rules(self, user: User) -> AlertRuleListResponse:
+        initialize_database()
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id, name, condition_level, condition_keyword, condition_service, threshold, enabled, created_at FROM alert_rules WHERE user_id = %s ORDER BY created_at DESC",
+                (user.id,),
+            ).fetchall()
+        return AlertRuleListResponse(
+            items=[
+                AlertRule(
+                    id=r["id"], name=r["name"],
+                    condition_level=r["condition_level"], condition_keyword=r["condition_keyword"],
+                    condition_service=r["condition_service"], threshold=r["threshold"],
+                    enabled=r["enabled"], created_at=_format_datetime(r["created_at"]),
+                ) for r in rows
+            ],
+        )
+
+    def create_alert_rule(self, user: User, data: AlertRuleCreate) -> AlertRule:
+        initialize_database()
+        with get_connection() as conn:
+            row = conn.execute(
+                """INSERT INTO alert_rules (user_id, name, condition_level, condition_keyword, condition_service, threshold, enabled)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id, created_at""",
+                (user.id, data.name, data.condition_level, data.condition_keyword, data.condition_service, data.threshold, data.enabled),
+            ).fetchone()
+        return AlertRule(
+            id=row["id"], name=data.name,
+            condition_level=data.condition_level, condition_keyword=data.condition_keyword,
+            condition_service=data.condition_service, threshold=data.threshold,
+            enabled=data.enabled, created_at=_format_datetime(row["created_at"]),
+        )
+
+    def delete_alert_rule(self, rule_id: int, user: User) -> None:
+        initialize_database()
+        with get_connection() as conn:
+            result = conn.execute("DELETE FROM alert_rules WHERE id = %s AND user_id = %s", (rule_id, user.id))
+            if result.rowcount == 0:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found.")
+
+    def evaluate_alert_rules(self, user_local_id: int, user: User) -> AlertEvalResponse:
+        initialize_database()
+        log = self._get_log_row(user_local_id, user)
+        log_id = log["id"]
+
+        with get_connection() as conn:
+            rules = conn.execute(
+                "SELECT id, name, condition_level, condition_keyword, condition_service, threshold FROM alert_rules WHERE user_id = %s AND enabled = TRUE",
+                (user.id,),
+            ).fetchall()
+
+        if not rules:
+            return AlertEvalResponse(alerts=[])
+
+        where_parts = [f"log_id = {log_id}"]
+        params: list[Any] = []
+        entries = self._get_entry_rows(log_id, page=1, per_page=10000)[0]
+
+        alerts = []
+        for rule in rules:
+            matched = 0
+            for entry in entries:
+                if rule["condition_level"] and (entry["level"] or "").upper() != (rule["condition_level"] or "").upper():
+                    continue
+                if rule["condition_keyword"] and rule["condition_keyword"].lower() not in (entry["message"] or "").lower():
+                    continue
+                if rule["condition_service"] and rule["condition_service"].lower() not in (entry["service_name"] or "").lower():
+                    continue
+                matched += 1
+
+            triggered = matched >= rule["threshold"]
+            alerts.append(AlertRuleEval(
+                rule_id=rule["id"], rule_name=rule["name"], triggered=triggered,
+                message=f"「{rule['name']}」匹配 {matched} 条，阈值 {rule['threshold']}{' — 已触发' if triggered else ''}",
+            ))
+
+        return AlertEvalResponse(alerts=alerts)
 
 
 def parse_log_entries(content: str) -> list[dict[str, Any]]:

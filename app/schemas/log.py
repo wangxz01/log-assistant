@@ -29,6 +29,10 @@ class LogSummary(BaseModel):
 
 class LogListResponse(BaseModel):
     items: list[LogSummary]
+    total: int = 0
+    page: int = 1
+    per_page: int = 20
+    total_pages: int = 1
 
 
 class LogEntryResponse(BaseModel):
@@ -87,6 +91,41 @@ class AnalysisRecord(BaseModel):
 
 class AnalysisHistoryResponse(BaseModel):
     items: list[AnalysisRecord]
+
+
+class AlertRuleCreate(BaseModel):
+    name: str
+    condition_level: str | None = None
+    condition_keyword: str | None = None
+    condition_service: str | None = None
+    threshold: int = 1
+    enabled: bool = True
+
+
+class AlertRule(BaseModel):
+    id: int
+    name: str
+    condition_level: str | None = None
+    condition_keyword: str | None = None
+    condition_service: str | None = None
+    threshold: int
+    enabled: bool
+    created_at: str
+
+
+class AlertRuleListResponse(BaseModel):
+    items: list[AlertRule]
+
+
+class AlertRuleEval(BaseModel):
+    rule_id: int
+    rule_name: str
+    triggered: bool
+    message: str
+
+
+class AlertEvalResponse(BaseModel):
+    alerts: list[AlertRuleEval]
 
 
 class LevelDistribution(BaseModel):

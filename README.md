@@ -289,18 +289,22 @@ app/
   core/             配置、数据库、安全
   models/           数据模型
   schemas/          请求/响应 schema
-  services/         业务逻辑：认证、日志、AI 分析、任务状态
+  services/         业务逻辑：认证、日志、AI 分析、任务状态、告警规则
   worker.py         独立后台 Worker，消费 Redis 分析任务
 frontend/
   src/
+    pages/          页面组件：AuthPage, WorkspaceView, DetailView, ResponseView
     composables/    可复用逻辑：useApi, useAuth, useFilters, useUpload, useFormat
     __tests__/      前端单元测试（Vitest）
 tests/              后端自动化测试
 tools/
   demo_data/        演示数据脚本
   log_generator/    测试日志生成器
+  perf_benchmark.py 性能基准测试
 docs/
   images/           README 展示截图
+  TESTING.md        测试指南
+  TEST_REPORT.md    测试报告
 ```
 
 ## API 列表
@@ -315,12 +319,17 @@ docs/
 | `GET` | `/auth/me` | 当前用户信息 |
 | `POST` | `/logs/upload` | 上传单个日志 |
 | `POST` | `/logs/upload/batch` | 批量上传日志 |
-| `GET` | `/logs` | 日志列表，支持 `keyword`、`status`、`service`、`start_time`、`end_time` |
+| `GET` | `/logs` | 日志列表，支持 `keyword`、`status`、`service`、`level`、`start_time`、`end_time`、`page`、`per_page` |
 | `GET` | `/logs/{id}` | 日志详情，支持 `keyword`、`level`、`service`、`page`、`per_page` |
 | `POST` | `/logs/{id}/analyze` | 提交 AI 分析任务 |
 | `GET` | `/logs/{id}/analyze/status` | 查询分析任务进度和结果 |
 | `GET` | `/logs/{id}/analyses` | 查看分析历史记录 |
 | `GET` | `/logs/{id}/stats` | 查看统计信息（级别分布、服务分布） |
+| `WS` | `/logs/{id}/analyze/ws` | WebSocket 实时推送分析状态（替代轮询） |
+| `GET` | `/logs/alerts/rules` | 查看告警规则列表 |
+| `POST` | `/logs/alerts/rules` | 创建告警规则 |
+| `DELETE` | `/logs/alerts/rules/{id}` | 删除告警规则 |
+| `GET` | `/logs/{id}/alerts/eval` | 评估当前日志是否触发告警规则 |
 
 ## 当前完成度
 
