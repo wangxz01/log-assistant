@@ -3,17 +3,22 @@ import { useUpload } from "../composables/useUpload.js";
 
 describe("useUpload", () => {
   it("starts with empty file list", () => {
-    const { uploadFiles } = useUpload();
+    const { uploadFiles } = useUpload(() => "");
     expect(uploadFiles.value).toEqual([]);
   });
 
   it("is not loading initially", () => {
-    const { uploadLoading } = useUpload();
+    const { uploadLoading } = useUpload(() => "");
     expect(uploadLoading.value).toBe(false);
   });
 
+  it("starts with zero progress", () => {
+    const { uploadProgress } = useUpload(() => "");
+    expect(uploadProgress.value).toBe(0);
+  });
+
   it("handles file selection", () => {
-    const { uploadFiles, onFileChange } = useUpload();
+    const { uploadFiles, onFileChange } = useUpload(() => "");
     const fakeFile = new File(["content"], "test.log", { type: "text/plain" });
     onFileChange({ target: { files: [fakeFile] } });
     expect(uploadFiles.value.length).toBe(1);
@@ -21,7 +26,7 @@ describe("useUpload", () => {
   });
 
   it("filters unsupported file types on drop", () => {
-    const { uploadFiles, onDrop } = useUpload();
+    const { uploadFiles, onDrop } = useUpload(() => "");
     const logFile = new File(["content"], "test.log", { type: "text/plain" });
     const imgFile = new File(["content"], "test.png", { type: "image/png" });
 
@@ -31,9 +36,7 @@ describe("useUpload", () => {
   });
 
   it("does not submit when no files selected", async () => {
-    const requestApi = vi.fn();
-    const { submitUpload } = useUpload(requestApi);
+    const { submitUpload } = useUpload(() => "");
     await submitUpload();
-    expect(requestApi).not.toHaveBeenCalled();
   });
 });

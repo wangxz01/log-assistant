@@ -5,6 +5,10 @@ import { useAuth } from "./composables/useAuth.js";
 import { useFilters } from "./composables/useFilters.js";
 import { useUpload } from "./composables/useUpload.js";
 import { formatBytes, formatDate, formatJson, splitItems } from "./composables/useFormat.js";
+import AuthPage from "./pages/AuthPage.vue";
+import WorkspaceView from "./pages/WorkspaceView.vue";
+import DetailView from "./pages/DetailView.vue";
+import ResponseView from "./pages/ResponseView.vue";
 
 const activeView = ref("workspace");
 const health = ref(null);
@@ -33,7 +37,7 @@ const {
 } = useAuth(requestApi);
 
 const {
-  keywordFilter, statusFilter, serviceFilter, startTimeFilter, endTimeFilter,
+  keywordFilter, statusFilter, levelFilter, serviceFilter, startTimeFilter, endTimeFilter,
   appliedFilters, hasAppliedFilters, appliedFilterTags,
   buildLogQuery, applyFilters, clearFilters,
 } = useFilters(async () => {
@@ -44,9 +48,9 @@ const {
 });
 
 const {
-  uploadFiles, isDragActive, uploadLoading, uploadResult,
+  uploadFiles, isDragActive, uploadLoading, uploadResult, uploadProgress,
   submitUpload, onFileChange, onDragEnter, onDragLeave, onDrop,
-} = useUpload(requestApi, async (logId) => {
+} = useUpload(() => token.value, async (logId) => {
   selectedLogId.value = logId;
   await loadLogs();
   await loadLogDetail(logId);
@@ -64,13 +68,6 @@ const keyEntries = computed(() =>
     return entry.is_key_event || ["WARN", "ERROR", "FATAL", "CRITICAL"].includes(level);
   }),
 );
-
-function highlightText(text, keyword) {
-  if (!keyword || !text) return (text || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const safe = (text || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return safe.replace(new RegExp(`(${escaped})`, "gi"), "<mark>$1</mark>");
-}
 
 function normalizeIssueTitle(message) {
   return message
@@ -189,8 +186,10 @@ async function loadLogDetail(logId = selectedLogId.value) {
   try {
     const params = new URLSearchParams({ page: entriesPage.value, per_page: entriesPerPage });
     if (activeKeyword.value) params.set("keyword", activeKeyword.value);
-    const service = appliedFilters.value.service;
-    if (service) params.set("service", service);
+    if (appliedFilters.value.service) params.set("service", appliedFilters.value.service);
+    if (appliedFilters.value.level) params.set("level", appliedFilters.value.level);
+    if (appliedFilters.value.startTime) params.set("start_time", appliedFilters.value.startTime);
+    if (appliedFilters.value.endTime) params.set("end_time", appliedFilters.value.endTime);
     selectedLog.value = await requestApi(`/logs/${selectedLogId.value}?${params}`);
     entriesTotalPages.value = selectedLog.value?.total_pages || 1;
   } catch { selectedLog.value = null; } finally { selectedLogLoading.value = false; }
@@ -205,11 +204,6 @@ async function loadLogStats(logId = selectedLogId.value) {
   if (!isAuthenticated.value || !logId) return;
   try { logStats.value = await requestApi(`/logs/${logId}/stats`, { silent: true }); }
   catch { logStats.value = null; }
-}
-
-function barWidth(count, maxCount) {
-  const max = maxCount || 1;
-  return `${Math.max(8, Math.round((count / max) * 100))}%`;
 }
 
 async function loadAnalysisHistory(logId = selectedLogId.value) {
@@ -231,14 +225,13 @@ async function selectLog(logId) {
 
 function backToWorkspace() { activeView.value = "workspace"; }
 
-async function analyzeLog(logId = selectedLogId.value) {
-  if (!isAuthenticated.value || !logId) return;
+async function analyzeLog() {
+  if (!isAuthenticated.value || !selectedLogId.value) return;
   if (!aiConfigured.value) { errorMessage.value = "AI 分析未配置：请在 .env 中设置 DEEPSEEK_API_KEY 后重启服务。"; return; }
   stopPolling();
   analysisLoading.value = true;
   analysisStatus.value = "pending";
   analysisResult.value = null;
-  selectedLogId.value = Number(logId);
   try { await requestApi(`/logs/${selectedLogId.value}/analyze`, { method: "POST" }); startPolling(selectedLogId.value); }
   catch { analysisLoading.value = false; analysisStatus.value = ""; }
 }
@@ -270,6 +263,41 @@ async function pollAnalysisStatus(logId) {
       errorMessage.value = "没有找到当前日志的分析任务，请重新点击分析。";
     }
   } catch { stopPolling(); analysisLoading.value = false; analysisStatus.value = ""; }
+}
+
+function exportAnalysis() {
+  if (!analysisResult.value) return;
+  const lines = [];
+  lines.push("=== AI 摘要 ===");
+  lines.push(analysisResult.value.summary || "");
+  lines.push("");
+  lines.push("=== 异常原因 ===");
+  const causes = Array.isArray(analysisResult.value.causes) ? analysisResult.value.causes : [analysisResult.value.causes];
+  causes.forEach((c, i) => lines.push(`${i + 1}. ${c}`));
+  lines.push("");
+  lines.push("=== 排障建议 ===");
+  const suggestions = Array.isArray(analysisResult.value.suggestions) ? analysisResult.value.suggestions : [analysisResult.value.suggestions];
+  suggestions.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
+  downloadText(`analysis-${selectedLogId.value}.txt`, lines.join("\n"));
+}
+
+function exportEntries() {
+  if (!selectedLog.value?.entries?.length) return;
+  const header = "行号\t时间\t级别\t服务/模块\t内容";
+  const rows = selectedLog.value.entries.map((e) =>
+    `${e.line_number}\t${e.timestamp || ""}\t${e.level || ""}\t${e.service_name || ""}\t${e.message}`,
+  );
+  downloadText(`entries-${selectedLogId.value}.tsv`, [header, ...rows].join("\n"));
+}
+
+function downloadText(filename, content) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function logout() {
@@ -304,64 +332,23 @@ async function onFormSubmitAuth() {
 </script>
 
 <template>
-  <main v-if="sessionLoading" class="auth-page">
-    <section class="auth-panel">
-      <div class="auth-brand">
-        <div class="brand-mark">LA</div>
-        <div>
-          <p class="eyebrow">Log Assistant</p>
-          <h1>正在恢复登录状态</h1>
-        </div>
-      </div>
-      <div class="auth-footer">
-        <span class="status-dot" :class="{ online: health?.status === 'ok' }"></span>
-        <span>{{ apiStatusText }}</span>
-      </div>
-    </section>
-  </main>
-
-  <main v-else-if="!isAuthenticated" class="auth-page">
-    <section class="auth-panel">
-      <div class="auth-brand">
-        <div class="brand-mark">LA</div>
-        <div>
-          <p class="eyebrow">Log Assistant</p>
-          <h1>登录日志分析平台</h1>
-        </div>
-      </div>
-
-      <div class="auth-tabs" role="tablist" aria-label="认证方式">
-        <button :class="{ active: authMode === 'login' }" type="button" @click="authMode = 'login'">登录</button>
-        <button :class="{ active: authMode === 'register' }" type="button" @click="authMode = 'register'">注册</button>
-      </div>
-
-      <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
-      <p v-if="authNotice" class="notice-banner">{{ authNotice }}</p>
-
-      <form class="auth-form" @submit.prevent="onFormSubmitAuth">
-        <label class="field-label" for="email">邮箱</label>
-        <input id="email" v-model="authEmail" type="email" autocomplete="email" />
-
-        <label class="field-label" for="password">密码</label>
-        <input
-          id="password"
-          v-model="authPassword"
-          type="password"
-          :autocomplete="authMode === 'register' ? 'new-password' : 'current-password'"
-          minlength="8"
-        />
-
-        <button class="primary-button full-button" type="submit" :disabled="authLoading">
-          {{ authLoading ? "处理中" : authMode === "login" ? "登录" : "创建账号" }}
-        </button>
-      </form>
-
-      <div class="auth-footer">
-        <span class="status-dot" :class="{ online: health?.status === 'ok' }"></span>
-        <span>{{ apiStatusText }}</span>
-      </div>
-    </section>
-  </main>
+  <AuthPage
+    v-if="sessionLoading || !isAuthenticated"
+    :health="health"
+    :session-loading="sessionLoading"
+    :is-authenticated="isAuthenticated"
+    :auth-mode="authMode"
+    :auth-email="authEmail"
+    :auth-password="authPassword"
+    :auth-loading="authLoading"
+    :error-message="errorMessage"
+    :auth-notice="authNotice"
+    :api-status-text="apiStatusText"
+    @update:auth-mode="authMode = $event"
+    @update:auth-email="authEmail = $event"
+    @update:auth-password="authPassword = $event"
+    @submit="onFormSubmitAuth"
+  />
 
   <div v-else class="app-shell">
     <aside class="sidebar">
@@ -410,413 +397,74 @@ async function onFormSubmitAuth() {
 
       <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
-      <section v-if="activeView === 'workspace'" class="workspace-content">
-        <section class="metric-grid">
-          <div class="metric-card">
-            <span>日志</span>
-            <strong>{{ logs.length }}</strong>
-          </div>
-          <div class="metric-card">
-            <span>ERROR</span>
-            <strong>{{ totalErrors }}</strong>
-          </div>
-          <div class="metric-card">
-            <span>WARN</span>
-            <strong>{{ totalWarnings }}</strong>
-          </div>
-          <div class="metric-card">
-            <span>当前日志</span>
-            <strong>{{ selectedLogId ? `#${selectedLogId}` : "-" }}</strong>
-          </div>
-        </section>
+      <WorkspaceView
+        v-if="activeView === 'workspace'"
+        :logs="logs"
+        :logs-loading="logsLoading"
+        :selected-log-id="selectedLogId"
+        :total-errors="totalErrors"
+        :total-warnings="totalWarnings"
+        :upload-files="uploadFiles"
+        :is-drag-active="isDragActive"
+        :upload-loading="uploadLoading"
+        :upload-result="uploadResult"
+        :upload-progress="uploadProgress"
+        :has-applied-filters="hasAppliedFilters"
+        :applied-filter-tags="appliedFilterTags"
+        :keyword-filter="keywordFilter"
+        :status-filter="statusFilter"
+        :level-filter="levelFilter"
+        :service-filter="serviceFilter"
+        :start-time-filter="startTimeFilter"
+        :end-time-filter="endTimeFilter"
+        @select-log="selectLog"
+        @submit-upload="submitUpload"
+        @file-change="onFileChange"
+        @drag-enter="onDragEnter"
+        @drag-over="onDragEnter"
+        @drag-leave="onDragLeave"
+        @drop="onDrop"
+        @apply-filters="applyFilters"
+        @clear-filters="clearFilters"
+        @update:keyword-filter="keywordFilter = $event"
+        @update:status-filter="statusFilter = $event"
+        @update:level-filter="levelFilter = $event"
+        @update:service-filter="serviceFilter = $event"
+        @update:start-time-filter="startTimeFilter = $event"
+        @update:end-time-filter="endTimeFilter = $event"
+      />
 
-        <section class="workspace-grid">
-          <section class="panel upload-panel">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">Upload</p>
-                <h2>上传日志</h2>
-              </div>
-              <span class="tag">{{ uploadFiles.length > 0 ? `${uploadFiles.length} 个文件` : "等待" }}</span>
-            </div>
+      <DetailView
+        v-if="activeView === 'detail'"
+        :selected-log="selectedLog"
+        :selected-log-id="selectedLogId"
+        :analysis-result="analysisResult"
+        :analysis-loading="analysisLoading"
+        :analysis-status="analysisStatus"
+        :analysis-history="analysisHistory"
+        :analysis-history-loading="analysisHistoryLoading"
+        :ai-configured="aiConfigured"
+        :active-keyword="activeKeyword"
+        :log-stats="logStats"
+        :entries-page="entriesPage"
+        :entries-total-pages="entriesTotalPages"
+        :diagnosis-metrics="diagnosisMetrics"
+        :high-frequency-exceptions="highFrequencyExceptions"
+        :key-information-groups="keyInformationGroups"
+        :key-event-timeline="keyEventTimeline"
+        @analyze="analyzeLog"
+        @back="backToWorkspace"
+        @go-page="goToEntriesPage"
+        @export-analysis="exportAnalysis"
+        @export-entries="exportEntries"
+        @select-history="analysisResult = $event"
+      />
 
-            <div
-              class="drop-zone"
-              :class="{ active: isDragActive }"
-              @dragenter.prevent="onDragEnter"
-              @dragover.prevent="onDragEnter"
-              @dragleave.prevent="onDragLeave"
-              @drop.prevent="onDrop"
-            >
-              <label class="drop-label" for="log-file">
-                <strong>{{ uploadFiles.length > 0 ? `已选择 ${uploadFiles.length} 个文件` : "拖入日志文件" }}</strong>
-                <span>支持 .log / .txt，可一次选择多个文件</span>
-              </label>
-              <input id="log-file" class="file-input" type="file" accept=".log,.txt,text/plain" multiple @change="onFileChange" />
-            </div>
-
-            <ul v-if="uploadFiles.length > 0" class="selected-files">
-              <li v-for="file in uploadFiles" :key="`${file.name}-${file.size}`">
-                <span>{{ file.name }}</span>
-                <em>{{ formatBytes(file.size) }}</em>
-              </li>
-            </ul>
-
-            <button class="primary-button full-button" type="button" :disabled="uploadLoading" @click="submitUpload">
-              {{ uploadLoading ? "上传中" : uploadFiles.length > 1 ? "批量上传并解析" : "上传并解析" }}
-            </button>
-
-            <dl v-if="uploadResult && !uploadResult.items" class="meta-list">
-              <div>
-                <dt>ID</dt>
-                <dd>#{{ uploadResult.id }}</dd>
-              </div>
-              <div>
-                <dt>文件名</dt>
-                <dd>{{ uploadResult.filename }}</dd>
-              </div>
-              <div>
-                <dt>解析行数</dt>
-                <dd>{{ uploadResult.parsed_entries }}</dd>
-              </div>
-            </dl>
-
-            <dl v-if="uploadResult?.items" class="meta-list">
-              <div>
-                <dt>上传数量</dt>
-                <dd>{{ uploadResult.uploaded_count }}</dd>
-              </div>
-              <div>
-                <dt>最后日志 ID</dt>
-                <dd>#{{ uploadResult.items.at(-1)?.id }}</dd>
-              </div>
-              <div>
-                <dt>总解析行数</dt>
-                <dd>{{ uploadResult.items.reduce((total, item) => total + item.parsed_entries, 0) }}</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section class="panel list-panel">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">Logs</p>
-                <h2>日志列表</h2>
-              </div>
-              <div class="button-row">
-                <button class="secondary-button" type="button" :disabled="logsLoading" @click="clearFilters">重置</button>
-                <button class="primary-button" type="button" :disabled="logsLoading" @click="applyFilters">
-                  {{ logsLoading ? "加载中" : "查询" }}
-                </button>
-              </div>
-            </div>
-
-            <div class="filter-grid">
-              <label>
-                <span>关键词</span>
-                <input v-model="keywordFilter" type="search" placeholder="文件名或日志内容" />
-              </label>
-              <label>
-                <span>状态</span>
-                <select v-model="statusFilter">
-                  <option value="">全部</option>
-                  <option value="parsed">parsed</option>
-                  <option value="analyzed">analyzed</option>
-                </select>
-              </label>
-              <label>
-                <span>服务/模块</span>
-                <input v-model="serviceFilter" type="search" placeholder="服务名关键词" />
-              </label>
-              <label>
-                <span>开始时间</span>
-                <input v-model="startTimeFilter" type="text" placeholder="" />
-              </label>
-              <label>
-                <span>结束时间</span>
-                <input v-model="endTimeFilter" type="text" placeholder="" />
-              </label>
-            </div>
-
-            <div class="applied-filters">
-              <span class="applied-label">当前列表：</span>
-              <template v-if="hasAppliedFilters">
-                <span v-for="tag in appliedFilterTags" :key="tag" class="filter-chip">{{ tag }}</span>
-              </template>
-              <span v-else class="filter-chip muted">全部日志</span>
-            </div>
-
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>文件名</th>
-                    <th>状态</th>
-                    <th>上传时间</th>
-                    <th>ERROR</th>
-                    <th>WARN</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-for="log in logs"
-                    :key="log.id"
-                    :class="{ selected: log.id === selectedLogId }"
-                    @click="selectLog(log.id)"
-                  >
-                    <td>#{{ log.id }}</td>
-                    <td>{{ log.filename }}</td>
-                    <td><span class="tag">{{ log.status }}</span></td>
-                    <td>{{ formatDate(log.uploaded_at) }}</td>
-                    <td>{{ log.error_count }}</td>
-                    <td>{{ log.warn_count }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <p v-if="logs.length === 0" class="empty-state">
-              {{ hasAppliedFilters ? "当前筛选条件没有匹配日志" : "暂无日志" }}
-            </p>
-          </section>
-        </section>
-      </section>
-
-      <section v-if="activeView === 'detail'" class="detail-page">
-        <div class="detail-header">
-          <div>
-            <p class="eyebrow">Detail</p>
-            <h2>{{ selectedLog?.filename || "未选择日志" }}</h2>
-          </div>
-          <div class="button-row">
-            <span v-if="analysisLoading" class="tag tag-active">{{ analysisStatus === 'running' ? '分析中' : '排队中' }}</span>
-            <span v-else class="tag">{{ selectedLog?.status }}</span>
-            <span v-if="!aiConfigured" class="tag tag-warning">AI 未配置</span>
-            <button class="primary-button" type="button" :disabled="!selectedLogId || analysisLoading || !aiConfigured" @click="analyzeLog()">
-              {{ analysisLoading ? "请稍候..." : "分析" }}
-            </button>
-            <button class="secondary-button" type="button" @click="backToWorkspace">返回工作台</button>
-          </div>
-        </div>
-
-        <div class="detail-body">
-          <section class="panel detail-main">
-            <dl v-if="selectedLog" class="meta-list detail-meta">
-              <div>
-                <dt>所有者</dt>
-                <dd>{{ selectedLog.owner_email }}</dd>
-              </div>
-              <div>
-                <dt>上传时间</dt>
-                <dd>{{ formatDate(selectedLog.uploaded_at) }}</dd>
-              </div>
-              <div>
-                <dt>大小</dt>
-                <dd>{{ formatBytes(selectedLog.size_bytes) }}</dd>
-              </div>
-              <div>
-                <dt>显示行数</dt>
-                <dd>
-                  {{ selectedLog.parsed_entries }}
-                  <span v-if="selectedLog.total_parsed_entries !== selectedLog.parsed_entries" class="stats-hint">
-                    / 共 {{ selectedLog.total_parsed_entries }}
-                  </span>
-                </dd>
-              </div>
-            </dl>
-
-            <div v-if="selectedLog" class="troubleshooting-dashboard">
-              <div class="section-heading compact-heading">
-                <div>
-                  <p class="eyebrow">Diagnosis</p>
-                  <h2>排障面板</h2>
-                </div>
-              </div>
-
-              <section class="diagnosis-metrics">
-                <div v-for="metric in diagnosisMetrics" :key="metric.label" class="diagnosis-metric">
-                  <span>{{ metric.label }}</span>
-                  <strong>{{ metric.value }}</strong>
-                </div>
-              </section>
-
-              <section v-if="logStats" class="stats-section">
-                <div class="analysis-card">
-                  <h3>级别分布</h3>
-                  <div class="chart-bars">
-                    <div v-for="item in logStats.level_distribution" :key="item.level" class="chart-row">
-                      <span class="chart-label">{{ item.level }}</span>
-                      <div class="chart-bar-track">
-                        <div
-                          class="chart-bar-fill"
-                          :class="`bar-${(item.level || '').toLowerCase()}`"
-                          :style="{ width: barWidth(item.count, logStats.level_distribution[0]?.count) }"
-                        >{{ item.count }}</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div class="analysis-card">
-                  <h3>服务/模块分布</h3>
-                  <div v-if="logStats.service_distribution.length === 0" class="inline-empty">未识别到服务名</div>
-                  <div v-else class="chart-bars">
-                    <div v-for="item in logStats.service_distribution" :key="item.service" class="chart-row">
-                      <span class="chart-label">{{ item.service }}</span>
-                      <div class="chart-bar-track">
-                        <div class="chart-bar-fill" :style="{ width: barWidth(item.count, logStats.service_distribution[0]?.count) }">{{ item.count }}</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section class="dashboard-grid">
-                <div class="analysis-card">
-                  <h3>高频异常统计</h3>
-                  <div v-if="highFrequencyExceptions.length === 0" class="inline-empty">暂无 ERROR / WARN 事件</div>
-                  <ol v-else class="issue-list">
-                    <li v-for="issue in highFrequencyExceptions" :key="issue.title">
-                      <div>
-                        <strong>{{ issue.title }}</strong>
-                        <span>行 {{ issue.firstLine }} - {{ issue.lastLine }}</span>
-                      </div>
-                      <em>{{ issue.level }} · {{ issue.count }} 次</em>
-                    </li>
-                  </ol>
-                </div>
-
-                <div class="analysis-card">
-                  <h3>关键信息聚合</h3>
-                  <div class="info-groups">
-                    <section v-for="group in keyInformationGroups" :key="group.title">
-                      <h4>{{ group.title }}</h4>
-                      <div v-if="group.items.length === 0" class="inline-empty">{{ group.empty }}</div>
-                      <div v-else class="info-chips">
-                        <span v-for="item in group.items" :key="`${group.title}-${item.label}`">
-                          {{ item.label }} <em>{{ item.count }}</em>
-                        </span>
-                      </div>
-                    </section>
-                  </div>
-                </div>
-              </section>
-
-              <section class="analysis-card">
-                <h3>关键事件</h3>
-                <div v-if="keyEventTimeline.length === 0" class="inline-empty">暂无关键事件</div>
-                <div v-else class="event-timeline">
-                  <article v-for="entry in keyEventTimeline" :key="entry.id">
-                    <span class="tag">{{ entry.level || "-" }}</span>
-                    <div>
-                      <strong>第 {{ entry.line_number }} 行 · {{ entry.timestamp || "无时间戳" }}</strong>
-                      <p>{{ entry.message }}</p>
-                    </div>
-                  </article>
-                </div>
-              </section>
-
-              <section v-if="analysisResult" class="ai-result-grid">
-                <div class="analysis-card">
-                  <h3>AI 摘要</h3>
-                  <p class="analysis-text">{{ analysisResult.summary }}</p>
-                </div>
-                <div class="analysis-card analysis-card-warn">
-                  <h3>异常原因</h3>
-                  <ul class="analysis-list">
-                    <li v-for="(item, i) in (Array.isArray(analysisResult.causes) ? analysisResult.causes : [analysisResult.causes])" :key="`c-${i}`">{{ item }}</li>
-                  </ul>
-                </div>
-                <div class="analysis-card analysis-card-ok">
-                  <h3>排障建议</h3>
-                  <ul class="analysis-list">
-                    <li v-for="(item, i) in (Array.isArray(analysisResult.suggestions) ? analysisResult.suggestions : [analysisResult.suggestions])" :key="`s-${i}`">{{ item }}</li>
-                  </ul>
-                </div>
-              </section>
-              <div v-else class="analysis-card analysis-card-muted">
-                <h3>AI 分析</h3>
-                <p class="analysis-text">点击右上角「分析」后，这里会展示摘要、异常原因和排障建议。</p>
-              </div>
-            </div>
-
-            <div class="table-wrap entries-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>行</th>
-                    <th>时间</th>
-                    <th>级别</th>
-                    <th>服务/模块</th>
-                    <th>内容</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="entry in selectedLog?.entries || []" :key="entry.id" :class="{ key: entry.is_key_event }">
-                    <td>{{ entry.line_number }}</td>
-                    <td>{{ entry.timestamp || "-" }}</td>
-                    <td><span class="tag">{{ entry.level || "-" }}</span></td>
-                    <td>{{ entry.service_name || "-" }}</td>
-                    <td v-html="highlightText(entry.message, activeKeyword)"></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div v-if="entriesTotalPages > 1" class="pagination">
-              <button class="secondary-button" type="button" :disabled="entriesPage <= 1" @click="goToEntriesPage(entriesPage - 1)">上一页</button>
-              <span class="pagination-info">{{ entriesPage }} / {{ entriesTotalPages }}</span>
-              <button class="secondary-button" type="button" :disabled="entriesPage >= entriesTotalPages" @click="goToEntriesPage(entriesPage + 1)">下一页</button>
-            </div>
-
-            <p v-if="!selectedLog" class="empty-state">未选择日志</p>
-          </section>
-
-          <aside class="detail-sidebar">
-            <section class="panel">
-              <div class="section-heading compact-heading">
-                <div>
-                  <p class="eyebrow">Preview</p>
-                  <h2>原始片段</h2>
-                </div>
-              </div>
-              <pre>{{ selectedLog?.content_preview || "暂无内容" }}</pre>
-            </section>
-
-            <section class="panel">
-              <div class="section-heading compact-heading">
-                <div>
-                  <p class="eyebrow">History</p>
-                  <h2>分析历史</h2>
-                </div>
-              </div>
-              <div v-if="analysisHistoryLoading" class="empty-state">加载中</div>
-              <div v-else-if="analysisHistory.length === 0" class="empty-state">暂无分析记录</div>
-              <div v-else class="history-list">
-                <div
-                  v-for="record in analysisHistory"
-                  :key="record.id"
-                  class="history-item"
-                  @click="analysisResult = record"
-                >
-                  <span class="history-time">{{ formatDate(record.analyzed_at) }}</span>
-                  <span class="tag">{{ record.id }}</span>
-                </div>
-              </div>
-            </section>
-          </aside>
-        </div>
-      </section>
-
-      <section v-if="activeView === 'response'" class="panel response-panel">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Response</p>
-            <h2>最近响应</h2>
-          </div>
-        </div>
-        <pre>{{ formatJson(lastResponse) || "暂无响应" }}</pre>
-      </section>
+      <ResponseView
+        v-if="activeView === 'response'"
+        :last-response="lastResponse"
+        :format-json="formatJson"
+      />
     </main>
   </div>
 </template>
