@@ -252,6 +252,11 @@ Docker 开发模式已挂载源码并开启热更新：
 - 数据库：API 容器启动前自动执行 `alembic upgrade head`
 - 工具脚本：`tools/` 已挂载到 API 容器，demo 数据脚本可直接执行
 
+## 测试文档
+
+- [测试指南](docs/TESTING.md) — 如何运行测试、测试覆盖范围、编写新测试
+- [测试报告](docs/TEST_REPORT.md) — 完整测试结果（38 个自动化用例 + 性能基准 + 安全测试）
+
 ## 数据库迁移
 
 项目使用 Alembic 管理 PostgreSQL 表结构。
