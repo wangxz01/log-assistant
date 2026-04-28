@@ -10,6 +10,8 @@ from app.core.config import settings
 from app.core.database import get_connection, initialize_database
 from app.models.user import User
 from app.schemas.log import (
+    AnalysisHistoryResponse,
+    AnalysisRecord,
     AnalyzeResponse,
     BatchLogUploadResponse,
     LogDetailResponse,
@@ -132,11 +134,12 @@ class LogService:
         user: User,
         keyword: str | None = None,
         level: str | None = None,
+        status: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
     ) -> LogListResponse:
         initialize_database()
-        where_clauses, params = self._build_log_filters(user, keyword, level, start_time, end_time)
+        where_clauses, params = self._build_log_filters(user, keyword, level, status, start_time, end_time)
 
         with get_connection() as connection:
             rows = connection.execute(
@@ -182,7 +185,7 @@ class LogService:
         initialize_database()
         log = self._get_log_row(user_local_id, user)
         entries = self._get_entry_rows(log["id"], keyword, level, start_time, end_time)
-        stats = self._get_log_stats(log["id"])
+        total_stats = self._get_log_stats(log["id"])
 
         return LogDetailResponse(
             id=user_local_id,
@@ -193,33 +196,80 @@ class LogService:
             size_bytes=log["size_bytes"],
             content_preview=self._read_preview(log["storage_path"]),
             entries=[self._row_to_entry(row) for row in entries],
-            parsed_entries=stats["parsed_entries"],
-            error_count=stats["error_count"],
-            warn_count=stats["warn_count"],
+            parsed_entries=len(entries),
+            error_count=sum(1 for e in entries if e["is_key_event"] and e["level"] in ("ERROR", "FATAL", "CRITICAL")),
+            warn_count=sum(1 for e in entries if e["is_key_event"] and e["level"] == "WARN"),
+            total_parsed_entries=total_stats["parsed_entries"],
+            total_error_count=total_stats["error_count"],
+            total_warn_count=total_stats["warn_count"],
         )
 
     def analyze(self, user_local_id: int, user: User) -> AnalyzeResponse:
         initialize_database()
         log = self._get_log_row(user_local_id, user)
         log_id = log["id"]
-        stats = self._get_log_stats(log_id)
+
+        entries = self._get_entry_rows(log_id)
+        log_content = "\n".join(e["message"] for e in entries)
+
+        if not log_content.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No log entries to analyze.",
+            )
+
+        from app.services.ai_service import analyze_log_content
+
+        result = analyze_log_content(log_content)
 
         with get_connection() as connection:
             connection.execute(
                 "UPDATE logs SET status = %s WHERE id = %s AND user_id = %s",
                 ("analyzed", log_id, user.id),
             )
+            connection.execute(
+                """
+                INSERT INTO analysis_records (log_id, user_id, summary, causes, suggestions)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (log_id, user.id, result["summary"], result["causes"], result["suggestions"]),
+            )
 
         return AnalyzeResponse(
             log_id=user_local_id,
             status="analyzed",
-            summary=(
-                f"Parsed {stats['parsed_entries']} lines. "
-                f"Found {stats['error_count']} error events and {stats['warn_count']} warning events."
-            ),
-            parsed_entries=stats["parsed_entries"],
-            error_count=stats["error_count"],
-            warn_count=stats["warn_count"],
+            summary=result["summary"],
+            causes=result["causes"],
+            suggestions=result["suggestions"],
+        )
+
+    def list_analyses(self, user_local_id: int, user: User) -> AnalysisHistoryResponse:
+        initialize_database()
+        log = self._get_log_row(user_local_id, user)
+        log_id = log["id"]
+
+        with get_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, summary, causes, suggestions, analyzed_at
+                FROM analysis_records
+                WHERE log_id = %s AND user_id = %s
+                ORDER BY analyzed_at DESC
+                """,
+                (log_id, user.id),
+            ).fetchall()
+
+        return AnalysisHistoryResponse(
+            items=[
+                AnalysisRecord(
+                    id=row["id"],
+                    summary=row["summary"],
+                    causes=row["causes"],
+                    suggestions=row["suggestions"],
+                    analyzed_at=_format_datetime(row["analyzed_at"]),
+                )
+                for row in rows
+            ],
         )
 
     def _get_log_row(self, user_local_id: int, user: User) -> dict[str, Any]:
@@ -313,6 +363,7 @@ class LogService:
         user: User,
         keyword: str | None,
         level: str | None,
+        status: str | None,
         start_time: str | None,
         end_time: str | None,
     ) -> tuple[list[str], list[Any]]:
@@ -343,6 +394,10 @@ class LogService:
                 """
             )
             params.append(_normalize_level(level))
+
+        if status:
+            where_clauses.append("l.status = %s")
+            params.append(status)
 
         parsed_start = _parse_filter_time(start_time, "start_time")
         if parsed_start:

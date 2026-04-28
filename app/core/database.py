@@ -80,3 +80,19 @@ def initialize_database() -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_log_entries_event_time ON log_entries(event_time);"
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS analysis_records (
+                id SERIAL PRIMARY KEY,
+                log_id INTEGER NOT NULL REFERENCES logs(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                summary TEXT NOT NULL,
+                causes TEXT NOT NULL,
+                suggestions TEXT NOT NULL,
+                analyzed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_analysis_records_log_id ON analysis_records(log_id);"
+        )

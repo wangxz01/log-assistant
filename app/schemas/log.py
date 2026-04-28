@@ -52,12 +52,26 @@ class LogDetailResponse(BaseModel):
     parsed_entries: int
     error_count: int
     warn_count: int
+    total_parsed_entries: int
+    total_error_count: int
+    total_warn_count: int
 
 
 class AnalyzeResponse(BaseModel):
     log_id: int
     status: str
     summary: str
-    parsed_entries: int
-    error_count: int
-    warn_count: int
+    causes: str
+    suggestions: str
+
+
+class AnalysisRecord(BaseModel):
+    id: int
+    summary: str
+    causes: str
+    suggestions: str
+    analyzed_at: str
+
+
+class AnalysisHistoryResponse(BaseModel):
+    items: list[AnalysisRecord]

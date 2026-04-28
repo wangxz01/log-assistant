@@ -12,6 +12,8 @@ const selectedLog = ref(null);
 const selectedLogLoading = ref(false);
 const analysisResult = ref(null);
 const analysisLoading = ref(false);
+const analysisHistory = ref([]);
+const analysisHistoryLoading = ref(false);
 const uploadFiles = ref([]);
 const isDragActive = ref(false);
 const uploadLoading = ref(false);
@@ -27,25 +29,24 @@ const currentEmail = ref("");
 const lastResponse = ref(null);
 const errorMessage = ref("");
 const keywordFilter = ref("");
-const levelFilter = ref("");
+const statusFilter = ref("");
 const startTimeFilter = ref("");
 const endTimeFilter = ref("");
 const appliedFilters = ref({
   keyword: "",
-  level: "",
+  status: "",
   startTime: "",
   endTime: "",
 });
 
 const isAuthenticated = computed(() => Boolean(token.value));
 const apiStatusText = computed(() => (health.value?.status === "ok" ? "后端在线" : "后端未连接"));
-const selectedLogStatus = computed(() => selectedLog.value?.status || "未选择");
 const totalErrors = computed(() => logs.value.reduce((total, item) => total + (item.error_count || 0), 0));
 const totalWarnings = computed(() => logs.value.reduce((total, item) => total + (item.warn_count || 0), 0));
 const hasAppliedFilters = computed(() =>
   Boolean(
     appliedFilters.value.keyword ||
-      appliedFilters.value.level ||
+      appliedFilters.value.status ||
       appliedFilters.value.startTime ||
       appliedFilters.value.endTime,
   ),
@@ -57,8 +58,8 @@ const appliedFilterTags = computed(() => {
     tags.push(`关键词：${appliedFilters.value.keyword}`);
   }
 
-  if (appliedFilters.value.level) {
-    tags.push(`级别：${appliedFilters.value.level}`);
+  if (appliedFilters.value.status) {
+    tags.push(`状态：${appliedFilters.value.status}`);
   }
 
   if (appliedFilters.value.startTime) {
@@ -171,6 +172,7 @@ function logout() {
   selectedLogId.value = null;
   selectedLog.value = null;
   analysisResult.value = null;
+  analysisHistory.value = [];
   uploadResult.value = null;
   authResult.value = null;
   authMode.value = "login";
@@ -188,8 +190,13 @@ async function loadLogs() {
     const data = await requestApi(`/logs${buildLogQuery()}`);
     logs.value = data.items || [];
 
-    if (logs.value.length > 0 && !selectedLog.value) {
-      await loadLogDetail(logs.value[0].id);
+    if (selectedLogId.value) {
+      const stillExists = logs.value.some((log) => log.id === selectedLogId.value);
+      if (!stillExists) {
+        selectedLogId.value = null;
+        selectedLog.value = null;
+        analysisResult.value = null;
+      }
     }
   } catch {
     logs.value = [];
@@ -201,7 +208,7 @@ async function loadLogs() {
 async function applyFilters() {
   appliedFilters.value = {
     keyword: keywordFilter.value.trim(),
-    level: levelFilter.value,
+    status: statusFilter.value,
     startTime: startTimeFilter.value.trim(),
     endTime: endTimeFilter.value.trim(),
   };
@@ -220,7 +227,7 @@ async function loadLogDetail(logId = selectedLogId.value) {
   selectedLogId.value = Number(logId);
 
   try {
-    selectedLog.value = await requestApi(`/logs/${selectedLogId.value}${buildLogQuery()}`);
+    selectedLog.value = await requestApi(`/logs/${selectedLogId.value}`);
   } catch {
     selectedLog.value = null;
   } finally {
@@ -229,8 +236,32 @@ async function loadLogDetail(logId = selectedLogId.value) {
 }
 
 async function selectLog(logId) {
+  analysisResult.value = null;
   await loadLogDetail(logId);
+  await loadAnalysisHistory(logId);
   activeView.value = "detail";
+}
+
+function backToWorkspace() {
+  activeView.value = "workspace";
+}
+
+async function loadAnalysisHistory(logId = selectedLogId.value) {
+  if (!isAuthenticated.value || !logId) {
+    analysisHistory.value = [];
+    return;
+  }
+
+  analysisHistoryLoading.value = true;
+
+  try {
+    const data = await requestApi(`/logs/${logId}/analyses`);
+    analysisHistory.value = data.items || [];
+  } catch {
+    analysisHistory.value = [];
+  } finally {
+    analysisHistoryLoading.value = false;
+  }
 }
 
 async function analyzeLog(logId = selectedLogId.value) {
@@ -247,6 +278,7 @@ async function analyzeLog(logId = selectedLogId.value) {
     });
     await loadLogs();
     await loadLogDetail(selectedLogId.value);
+    await loadAnalysisHistory(selectedLogId.value);
   } catch {
     analysisResult.value = null;
   } finally {
@@ -322,8 +354,8 @@ function buildLogQuery() {
     query.set("keyword", filters.keyword);
   }
 
-  if (filters.level) {
-    query.set("level", filters.level);
+  if (filters.status) {
+    query.set("status", filters.status);
   }
 
   if (filters.startTime) {
@@ -340,12 +372,12 @@ function buildLogQuery() {
 
 async function clearFilters() {
   keywordFilter.value = "";
-  levelFilter.value = "";
+  statusFilter.value = "";
   startTimeFilter.value = "";
   endTimeFilter.value = "";
   appliedFilters.value = {
     keyword: "",
-    level: "",
+    status: "",
     startTime: "",
     endTime: "",
   };
@@ -450,7 +482,12 @@ onMounted(async () => {
         <button :class="{ active: activeView === 'workspace' }" type="button" @click="activeView = 'workspace'">
           工作台
         </button>
-        <button :class="{ active: activeView === 'detail' }" type="button" @click="activeView = 'detail'">
+        <button
+          :class="{ active: activeView === 'detail' }"
+          type="button"
+          :disabled="!selectedLogId"
+          @click="activeView = 'detail'"
+        >
           日志详情
         </button>
         <button :class="{ active: activeView === 'response' }" type="button" @click="activeView = 'response'">
@@ -478,258 +515,295 @@ onMounted(async () => {
 
       <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
-      <section class="metric-grid">
-        <div class="metric-card">
-          <span>日志</span>
-          <strong>{{ logs.length }}</strong>
-        </div>
-        <div class="metric-card">
-          <span>ERROR</span>
-          <strong>{{ totalErrors }}</strong>
-        </div>
-        <div class="metric-card">
-          <span>WARN</span>
-          <strong>{{ totalWarnings }}</strong>
-        </div>
-        <div class="metric-card">
-          <span>当前日志</span>
-          <strong>{{ selectedLogId ? `#${selectedLogId}` : "-" }}</strong>
-        </div>
-      </section>
-
-      <section v-if="activeView === 'workspace'" class="workspace-grid">
-        <section class="panel upload-panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Upload</p>
-              <h2>上传日志</h2>
-            </div>
-            <span class="tag">{{ uploadFiles.length > 0 ? `${uploadFiles.length} 个文件` : "等待" }}</span>
+      <section v-if="activeView === 'workspace'" class="workspace-content">
+        <section class="metric-grid">
+          <div class="metric-card">
+            <span>日志</span>
+            <strong>{{ logs.length }}</strong>
           </div>
-
-          <div
-            class="drop-zone"
-            :class="{ active: isDragActive }"
-            @dragenter.prevent="onDragEnter"
-            @dragover.prevent="onDragEnter"
-            @dragleave.prevent="onDragLeave"
-            @drop.prevent="onDrop"
-          >
-            <label class="drop-label" for="log-file">
-              <strong>{{ uploadFiles.length > 0 ? `已选择 ${uploadFiles.length} 个文件` : "拖入日志文件" }}</strong>
-              <span>支持 .log / .txt，可一次选择多个文件</span>
-            </label>
-            <input id="log-file" class="file-input" type="file" accept=".log,.txt,text/plain" multiple @change="onFileChange" />
+          <div class="metric-card">
+            <span>ERROR</span>
+            <strong>{{ totalErrors }}</strong>
           </div>
-
-          <ul v-if="uploadFiles.length > 0" class="selected-files">
-            <li v-for="file in uploadFiles" :key="`${file.name}-${file.size}`">
-              <span>{{ file.name }}</span>
-              <em>{{ formatBytes(file.size) }}</em>
-            </li>
-          </ul>
-
-          <button class="primary-button full-button" type="button" :disabled="uploadLoading" @click="submitUpload">
-            {{ uploadLoading ? "上传中" : uploadFiles.length > 1 ? "批量上传并解析" : "上传并解析" }}
-          </button>
-
-          <dl v-if="uploadResult && !uploadResult.items" class="meta-list">
-            <div>
-              <dt>ID</dt>
-              <dd>#{{ uploadResult.id }}</dd>
-            </div>
-            <div>
-              <dt>文件名</dt>
-              <dd>{{ uploadResult.filename }}</dd>
-            </div>
-            <div>
-              <dt>解析行数</dt>
-              <dd>{{ uploadResult.parsed_entries }}</dd>
-            </div>
-          </dl>
-
-          <dl v-if="uploadResult?.items" class="meta-list">
-            <div>
-              <dt>上传数量</dt>
-              <dd>{{ uploadResult.uploaded_count }}</dd>
-            </div>
-            <div>
-              <dt>最后日志 ID</dt>
-              <dd>#{{ uploadResult.items.at(-1)?.id }}</dd>
-            </div>
-            <div>
-              <dt>总解析行数</dt>
-              <dd>{{ uploadResult.items.reduce((total, item) => total + item.parsed_entries, 0) }}</dd>
-            </div>
-          </dl>
+          <div class="metric-card">
+            <span>WARN</span>
+            <strong>{{ totalWarnings }}</strong>
+          </div>
+          <div class="metric-card">
+            <span>当前日志</span>
+            <strong>{{ selectedLogId ? `#${selectedLogId}` : "-" }}</strong>
+          </div>
         </section>
 
-        <section class="panel list-panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Logs</p>
-              <h2>日志列表</h2>
+        <section class="workspace-grid">
+          <section class="panel upload-panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Upload</p>
+                <h2>上传日志</h2>
+              </div>
+              <span class="tag">{{ uploadFiles.length > 0 ? `${uploadFiles.length} 个文件` : "等待" }}</span>
             </div>
-            <div class="button-row">
-              <button class="secondary-button" type="button" :disabled="logsLoading" @click="clearFilters">重置筛选</button>
-              <button class="primary-button" type="button" :disabled="logsLoading" @click="applyFilters">
-                {{ logsLoading ? "加载中" : "查询" }}
-              </button>
+
+            <div
+              class="drop-zone"
+              :class="{ active: isDragActive }"
+              @dragenter.prevent="onDragEnter"
+              @dragover.prevent="onDragEnter"
+              @dragleave.prevent="onDragLeave"
+              @drop.prevent="onDrop"
+            >
+              <label class="drop-label" for="log-file">
+                <strong>{{ uploadFiles.length > 0 ? `已选择 ${uploadFiles.length} 个文件` : "拖入日志文件" }}</strong>
+                <span>支持 .log / .txt，可一次选择多个文件</span>
+              </label>
+              <input id="log-file" class="file-input" type="file" accept=".log,.txt,text/plain" multiple @change="onFileChange" />
             </div>
+
+            <ul v-if="uploadFiles.length > 0" class="selected-files">
+              <li v-for="file in uploadFiles" :key="`${file.name}-${file.size}`">
+                <span>{{ file.name }}</span>
+                <em>{{ formatBytes(file.size) }}</em>
+              </li>
+            </ul>
+
+            <button class="primary-button full-button" type="button" :disabled="uploadLoading" @click="submitUpload">
+              {{ uploadLoading ? "上传中" : uploadFiles.length > 1 ? "批量上传并解析" : "上传并解析" }}
+            </button>
+
+            <dl v-if="uploadResult && !uploadResult.items" class="meta-list">
+              <div>
+                <dt>ID</dt>
+                <dd>#{{ uploadResult.id }}</dd>
+              </div>
+              <div>
+                <dt>文件名</dt>
+                <dd>{{ uploadResult.filename }}</dd>
+              </div>
+              <div>
+                <dt>解析行数</dt>
+                <dd>{{ uploadResult.parsed_entries }}</dd>
+              </div>
+            </dl>
+
+            <dl v-if="uploadResult?.items" class="meta-list">
+              <div>
+                <dt>上传数量</dt>
+                <dd>{{ uploadResult.uploaded_count }}</dd>
+              </div>
+              <div>
+                <dt>最后日志 ID</dt>
+                <dd>#{{ uploadResult.items.at(-1)?.id }}</dd>
+              </div>
+              <div>
+                <dt>总解析行数</dt>
+                <dd>{{ uploadResult.items.reduce((total, item) => total + item.parsed_entries, 0) }}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="panel list-panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Logs</p>
+                <h2>日志列表</h2>
+              </div>
+              <div class="button-row">
+                <button class="secondary-button" type="button" :disabled="logsLoading" @click="clearFilters">重置</button>
+                <button class="primary-button" type="button" :disabled="logsLoading" @click="applyFilters">
+                  {{ logsLoading ? "加载中" : "查询" }}
+                </button>
+              </div>
+            </div>
+
+            <div class="filter-grid">
+              <label>
+                <span>关键词</span>
+                <input v-model="keywordFilter" type="search" placeholder="文件名或日志内容" />
+              </label>
+              <label>
+                <span>状态</span>
+                <select v-model="statusFilter">
+                  <option value="">全部</option>
+                  <option value="parsed">parsed</option>
+                  <option value="analyzed">analyzed</option>
+                </select>
+              </label>
+              <label>
+                <span>开始时间</span>
+                <input v-model="startTimeFilter" type="text" placeholder="" />
+              </label>
+              <label>
+                <span>结束时间</span>
+                <input v-model="endTimeFilter" type="text" placeholder="" />
+              </label>
+            </div>
+
+            <div class="applied-filters">
+              <span class="applied-label">当前列表：</span>
+              <template v-if="hasAppliedFilters">
+                <span v-for="tag in appliedFilterTags" :key="tag" class="filter-chip">{{ tag }}</span>
+              </template>
+              <span v-else class="filter-chip muted">全部日志</span>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>文件名</th>
+                    <th>状态</th>
+                    <th>上传时间</th>
+                    <th>ERROR</th>
+                    <th>WARN</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="log in logs"
+                    :key="log.id"
+                    :class="{ selected: log.id === selectedLogId }"
+                    @click="selectLog(log.id)"
+                  >
+                    <td>#{{ log.id }}</td>
+                    <td>{{ log.filename }}</td>
+                    <td><span class="tag">{{ log.status }}</span></td>
+                    <td>{{ formatDate(log.uploaded_at) }}</td>
+                    <td>{{ log.error_count }}</td>
+                    <td>{{ log.warn_count }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <p v-if="logs.length === 0" class="empty-state">
+              {{ hasAppliedFilters ? "当前筛选条件没有匹配日志" : "暂无日志" }}
+            </p>
+          </section>
+        </section>
+      </section>
+
+      <section v-if="activeView === 'detail'" class="detail-page">
+        <div class="detail-header">
+          <div>
+            <p class="eyebrow">Detail</p>
+            <h2>{{ selectedLog?.filename || "未选择日志" }}</h2>
           </div>
-
-          <p class="filter-help">筛选范围包括文件名和已解析的日志内容；时间范围基于日志行中解析出的时间戳。</p>
-
-          <div class="filter-grid">
-            <label>
-              <span>关键词</span>
-              <input v-model="keywordFilter" type="search" placeholder="文件名或日志内容，如 timeout" />
-            </label>
-            <label>
-              <span>日志级别</span>
-              <select v-model="levelFilter">
-                <option value="">全部</option>
-                <option value="ERROR">ERROR</option>
-                <option value="WARN">WARN</option>
-                <option value="INFO">INFO</option>
-                <option value="DEBUG">DEBUG</option>
-              </select>
-            </label>
-            <label>
-              <span>开始时间</span>
-              <input v-model="startTimeFilter" type="text" placeholder="2026-04-28T10:00:00" />
-            </label>
-            <label>
-              <span>结束时间</span>
-              <input v-model="endTimeFilter" type="text" placeholder="2026-04-28T11:00:00" />
-            </label>
+          <div class="button-row">
+            <span class="tag">{{ selectedLog?.status }}</span>
+            <button class="primary-button" type="button" :disabled="!selectedLogId || analysisLoading" @click="analyzeLog()">
+              {{ analysisLoading ? "分析中" : "分析" }}
+            </button>
+            <button class="secondary-button" type="button" @click="backToWorkspace">返回工作台</button>
           </div>
+        </div>
 
-          <div class="applied-filters">
-            <span class="applied-label">当前列表：</span>
-            <template v-if="hasAppliedFilters">
-              <span v-for="tag in appliedFilterTags" :key="tag" class="filter-chip">{{ tag }}</span>
-            </template>
-            <span v-else class="filter-chip muted">全部日志</span>
-          </div>
+        <div class="detail-body">
+          <section class="panel detail-main">
+            <dl v-if="selectedLog" class="meta-list detail-meta">
+              <div>
+                <dt>所有者</dt>
+                <dd>{{ selectedLog.owner_email }}</dd>
+              </div>
+              <div>
+                <dt>上传时间</dt>
+                <dd>{{ formatDate(selectedLog.uploaded_at) }}</dd>
+              </div>
+              <div>
+                <dt>大小</dt>
+                <dd>{{ formatBytes(selectedLog.size_bytes) }}</dd>
+              </div>
+              <div>
+                <dt>显示行数</dt>
+                <dd>
+                  {{ selectedLog.parsed_entries }}
+                  <span v-if="selectedLog.total_parsed_entries !== selectedLog.parsed_entries" class="stats-hint">
+                    / 共 {{ selectedLog.total_parsed_entries }}
+                  </span>
+                </dd>
+              </div>
+            </dl>
 
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>文件名</th>
-                  <th>状态</th>
-                  <th>上传时间</th>
-                  <th>ERROR</th>
-                  <th>WARN</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="log in logs"
-                  :key="log.id"
-                  :class="{ selected: log.id === selectedLogId }"
-                  @click="selectLog(log.id)"
+            <div v-if="analysisResult" class="analysis-cards">
+              <div class="section-heading compact-heading">
+                <div>
+                  <p class="eyebrow">Analyze</p>
+                  <h2>分析结果</h2>
+                </div>
+              </div>
+              <div class="analysis-card">
+                <h3>摘要</h3>
+                <p>{{ analysisResult.summary }}</p>
+              </div>
+              <div class="analysis-card analysis-card-warn">
+                <h3>异常原因</h3>
+                <p>{{ analysisResult.causes }}</p>
+              </div>
+              <div class="analysis-card analysis-card-ok">
+                <h3>排障建议</h3>
+                <p>{{ analysisResult.suggestions }}</p>
+              </div>
+            </div>
+
+            <div class="table-wrap entries-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>行</th>
+                    <th>时间</th>
+                    <th>级别</th>
+                    <th>内容</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="entry in selectedLog?.entries || []" :key="entry.id" :class="{ key: entry.is_key_event }">
+                    <td>{{ entry.line_number }}</td>
+                    <td>{{ entry.timestamp || "-" }}</td>
+                    <td><span class="tag">{{ entry.level || "-" }}</span></td>
+                    <td>{{ entry.message }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <p v-if="!selectedLog" class="empty-state">未选择日志</p>
+          </section>
+
+          <aside class="detail-sidebar">
+            <section class="panel">
+              <div class="section-heading compact-heading">
+                <div>
+                  <p class="eyebrow">Preview</p>
+                  <h2>原始片段</h2>
+                </div>
+              </div>
+              <pre>{{ selectedLog?.content_preview || "暂无内容" }}</pre>
+            </section>
+
+            <section class="panel">
+              <div class="section-heading compact-heading">
+                <div>
+                  <p class="eyebrow">History</p>
+                  <h2>分析历史</h2>
+                </div>
+              </div>
+              <div v-if="analysisHistoryLoading" class="empty-state">加载中</div>
+              <div v-else-if="analysisHistory.length === 0" class="empty-state">暂无分析记录</div>
+              <div v-else class="history-list">
+                <div
+                  v-for="record in analysisHistory"
+                  :key="record.id"
+                  class="history-item"
+                  @click="analysisResult = record"
                 >
-                  <td>#{{ log.id }}</td>
-                  <td>{{ log.filename }}</td>
-                  <td><span class="tag">{{ log.status }}</span></td>
-                  <td>{{ formatDate(log.uploaded_at) }}</td>
-                  <td>{{ log.error_count }}</td>
-                  <td>{{ log.warn_count }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <p v-if="logs.length === 0" class="empty-state">
-            {{ hasAppliedFilters ? "当前筛选条件没有匹配日志" : "暂无日志" }}
-          </p>
-        </section>
-      </section>
-
-      <section v-if="activeView === 'detail'" class="detail-grid">
-        <section class="panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Detail</p>
-              <h2>{{ selectedLog?.filename || "未选择日志" }}</h2>
-            </div>
-            <div class="button-row">
-              <span class="tag">{{ selectedLogStatus }}</span>
-              <button class="primary-button" type="button" :disabled="!selectedLogId || analysisLoading" @click="analyzeLog()">
-                {{ analysisLoading ? "分析中" : "分析" }}
-              </button>
-            </div>
-          </div>
-
-          <div v-if="hasAppliedFilters" class="detail-filter-note">
-            当前详情仅显示符合列表筛选条件的日志行。
-          </div>
-
-          <dl v-if="selectedLog" class="meta-list detail-meta">
-            <div>
-              <dt>所有者</dt>
-              <dd>{{ selectedLog.owner_email }}</dd>
-            </div>
-            <div>
-              <dt>上传时间</dt>
-              <dd>{{ formatDate(selectedLog.uploaded_at) }}</dd>
-            </div>
-            <div>
-              <dt>大小</dt>
-              <dd>{{ formatBytes(selectedLog.size_bytes) }}</dd>
-            </div>
-            <div>
-              <dt>解析行数</dt>
-              <dd>{{ selectedLog.parsed_entries }}</dd>
-            </div>
-          </dl>
-
-          <div class="table-wrap entries-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>行</th>
-                  <th>时间</th>
-                  <th>级别</th>
-                  <th>内容</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="entry in selectedLog?.entries || []" :key="entry.id" :class="{ key: entry.is_key_event }">
-                  <td>{{ entry.line_number }}</td>
-                  <td>{{ entry.timestamp || "-" }}</td>
-                  <td><span class="tag">{{ entry.level || "-" }}</span></td>
-                  <td>{{ entry.message }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <p v-if="!selectedLog" class="empty-state">未选择日志</p>
-        </section>
-
-        <section class="panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Preview</p>
-              <h2>原始片段</h2>
-            </div>
-          </div>
-          <pre>{{ selectedLog?.content_preview || "暂无内容" }}</pre>
-        </section>
-
-        <section class="panel">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Analyze</p>
-              <h2>分析结果</h2>
-            </div>
-          </div>
-          <pre>{{ formatJson(analysisResult) || "暂无结果" }}</pre>
-        </section>
+                  <span class="history-time">{{ formatDate(record.analyzed_at) }}</span>
+                  <span class="tag">{{ record.id }}</span>
+                </div>
+              </div>
+            </section>
+          </aside>
+        </div>
       </section>
 
       <section v-if="activeView === 'response'" class="panel response-panel">

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from app.api.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.log import (
+    AnalysisHistoryResponse,
     AnalyzeResponse,
     BatchLogUploadResponse,
     LogDetailResponse,
@@ -35,11 +36,12 @@ async def upload_logs(
 def list_logs(
     keyword: str | None = Query(default=None),
     level: str | None = Query(default=None),
+    log_status: str | None = Query(default=None, alias="status"),
     start_time: str | None = Query(default=None),
     end_time: str | None = Query(default=None),
     current_user: User = Depends(get_current_user),
 ) -> LogListResponse:
-    return log_service.list_logs(current_user, keyword, level, start_time, end_time)
+    return log_service.list_logs(current_user, keyword, level, log_status, start_time, end_time)
 
 
 @router.get("/{log_id}", response_model=LogDetailResponse)
@@ -60,3 +62,11 @@ def analyze_log(
     current_user: User = Depends(get_current_user),
 ) -> AnalyzeResponse:
     return log_service.analyze(log_id, current_user)
+
+
+@router.get("/{log_id}/analyses", response_model=AnalysisHistoryResponse)
+def list_analyses(
+    log_id: int,
+    current_user: User = Depends(get_current_user),
+) -> AnalysisHistoryResponse:
+    return log_service.list_analyses(log_id, current_user)

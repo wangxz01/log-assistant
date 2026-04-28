@@ -30,6 +30,7 @@ services:
       AUTH_SECRET_KEY: change-this-secret-key
       ACCESS_TOKEN_EXPIRE_MINUTES: 60
       UPLOAD_DIR: assets/uploads
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     depends_on:
       - postgres
       - redis

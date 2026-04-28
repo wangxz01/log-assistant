@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     auth_secret_key: str = "change-this-secret-key"
     access_token_expire_minutes: int = 60
     upload_dir: str = "assets/uploads"
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
