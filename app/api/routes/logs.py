@@ -2,7 +2,13 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 
 from app.api.dependencies import get_current_user
 from app.models.user import User
-from app.schemas.log import AnalyzeResponse, LogDetailResponse, LogListResponse, LogUploadResponse
+from app.schemas.log import (
+    AnalyzeResponse,
+    BatchLogUploadResponse,
+    LogDetailResponse,
+    LogListResponse,
+    LogUploadResponse,
+)
 from app.services.log_service import log_service
 
 
@@ -15,6 +21,14 @@ async def upload_log(
     current_user: User = Depends(get_current_user),
 ) -> LogUploadResponse:
     return await log_service.upload(file, current_user)
+
+
+@router.post("/upload/batch", response_model=BatchLogUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_logs(
+    files: list[UploadFile] = File(...),
+    current_user: User = Depends(get_current_user),
+) -> BatchLogUploadResponse:
+    return await log_service.upload_many(files, current_user)
 
 
 @router.get("", response_model=LogListResponse)

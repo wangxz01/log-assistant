@@ -9,6 +9,12 @@ class LogUploadResponse(BaseModel):
     message: str
 
 
+class BatchLogUploadResponse(BaseModel):
+    items: list[LogUploadResponse]
+    uploaded_count: int
+    message: str
+
+
 class LogSummary(BaseModel):
     id: int
     filename: str

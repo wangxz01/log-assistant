@@ -11,6 +11,7 @@ from app.core.database import get_connection, initialize_database
 from app.models.user import User
 from app.schemas.log import (
     AnalyzeResponse,
+    BatchLogUploadResponse,
     LogDetailResponse,
     LogEntryResponse,
     LogListResponse,
@@ -101,6 +102,21 @@ class LogService:
             status="parsed",
             parsed_entries=len(entries),
             message="Log uploaded and parsed.",
+        )
+
+    async def upload_many(self, files: list[UploadFile], user: User) -> BatchLogUploadResponse:
+        if not files:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one file is required.")
+
+        uploaded_logs = []
+
+        for file in files:
+            uploaded_logs.append(await self.upload(file, user))
+
+        return BatchLogUploadResponse(
+            items=uploaded_logs,
+            uploaded_count=len(uploaded_logs),
+            message=f"Uploaded and parsed {len(uploaded_logs)} log files.",
         )
 
     def list_logs(

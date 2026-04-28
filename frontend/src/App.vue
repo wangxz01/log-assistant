@@ -12,7 +12,8 @@ const selectedLog = ref(null);
 const selectedLogLoading = ref(false);
 const analysisResult = ref(null);
 const analysisLoading = ref(false);
-const uploadFile = ref(null);
+const uploadFiles = ref([]);
+const isDragActive = ref(false);
 const uploadLoading = ref(false);
 const uploadResult = ref(null);
 const authMode = ref("login");
@@ -29,12 +30,47 @@ const keywordFilter = ref("");
 const levelFilter = ref("");
 const startTimeFilter = ref("");
 const endTimeFilter = ref("");
+const appliedFilters = ref({
+  keyword: "",
+  level: "",
+  startTime: "",
+  endTime: "",
+});
 
 const isAuthenticated = computed(() => Boolean(token.value));
 const apiStatusText = computed(() => (health.value?.status === "ok" ? "后端在线" : "后端未连接"));
 const selectedLogStatus = computed(() => selectedLog.value?.status || "未选择");
 const totalErrors = computed(() => logs.value.reduce((total, item) => total + (item.error_count || 0), 0));
 const totalWarnings = computed(() => logs.value.reduce((total, item) => total + (item.warn_count || 0), 0));
+const hasAppliedFilters = computed(() =>
+  Boolean(
+    appliedFilters.value.keyword ||
+      appliedFilters.value.level ||
+      appliedFilters.value.startTime ||
+      appliedFilters.value.endTime,
+  ),
+);
+const appliedFilterTags = computed(() => {
+  const tags = [];
+
+  if (appliedFilters.value.keyword) {
+    tags.push(`关键词：${appliedFilters.value.keyword}`);
+  }
+
+  if (appliedFilters.value.level) {
+    tags.push(`级别：${appliedFilters.value.level}`);
+  }
+
+  if (appliedFilters.value.startTime) {
+    tags.push(`开始：${appliedFilters.value.startTime}`);
+  }
+
+  if (appliedFilters.value.endTime) {
+    tags.push(`结束：${appliedFilters.value.endTime}`);
+  }
+
+  return tags;
+});
 
 async function requestApi(path, options = {}) {
   errorMessage.value = "";
@@ -162,6 +198,19 @@ async function loadLogs() {
   }
 }
 
+async function applyFilters() {
+  appliedFilters.value = {
+    keyword: keywordFilter.value.trim(),
+    level: levelFilter.value,
+    startTime: startTimeFilter.value.trim(),
+    endTime: endTimeFilter.value.trim(),
+  };
+  selectedLogId.value = null;
+  selectedLog.value = null;
+  analysisResult.value = null;
+  await loadLogs();
+}
+
 async function loadLogDetail(logId = selectedLogId.value) {
   if (!isAuthenticated.value || !logId) {
     return;
@@ -206,7 +255,7 @@ async function analyzeLog(logId = selectedLogId.value) {
 }
 
 async function submitUpload() {
-  if (!uploadFile.value) {
+  if (uploadFiles.value.length === 0) {
     errorMessage.value = "请选择日志文件。";
     return;
   }
@@ -215,14 +264,21 @@ async function submitUpload() {
 
   try {
     const formData = new FormData();
-    formData.append("file", uploadFile.value);
-    uploadResult.value = await requestApi("/logs/upload", {
+    const isBatchUpload = uploadFiles.value.length > 1;
+
+    for (const file of uploadFiles.value) {
+      formData.append(isBatchUpload ? "files" : "file", file);
+    }
+
+    uploadResult.value = await requestApi(isBatchUpload ? "/logs/upload/batch" : "/logs/upload", {
       method: "POST",
       body: formData,
     });
-    selectedLogId.value = uploadResult.value.id;
+
+    const latestUpload = isBatchUpload ? uploadResult.value.items.at(-1) : uploadResult.value;
+    selectedLogId.value = latestUpload.id;
     await loadLogs();
-    await loadLogDetail(uploadResult.value.id);
+    await loadLogDetail(latestUpload.id);
   } catch {
     uploadResult.value = null;
   } finally {
@@ -231,26 +287,51 @@ async function submitUpload() {
 }
 
 function onFileChange(event) {
-  uploadFile.value = event.target.files?.[0] || null;
+  uploadFiles.value = Array.from(event.target.files || []);
+}
+
+function onDragEnter() {
+  isDragActive.value = true;
+}
+
+function onDragLeave(event) {
+  if (!event.currentTarget.contains(event.relatedTarget)) {
+    isDragActive.value = false;
+  }
+}
+
+function onDrop(event) {
+  isDragActive.value = false;
+  uploadFiles.value = Array.from(event.dataTransfer?.files || []).filter(isSupportedLogFile);
+
+  if (uploadFiles.value.length === 0) {
+    errorMessage.value = "请拖入 .log 或 .txt 文件。";
+  }
+}
+
+function isSupportedLogFile(file) {
+  const filename = file.name.toLowerCase();
+  return filename.endsWith(".log") || filename.endsWith(".txt") || file.type === "text/plain";
 }
 
 function buildLogQuery() {
   const query = new URLSearchParams();
+  const filters = appliedFilters.value;
 
-  if (keywordFilter.value) {
-    query.set("keyword", keywordFilter.value);
+  if (filters.keyword) {
+    query.set("keyword", filters.keyword);
   }
 
-  if (levelFilter.value) {
-    query.set("level", levelFilter.value);
+  if (filters.level) {
+    query.set("level", filters.level);
   }
 
-  if (startTimeFilter.value) {
-    query.set("start_time", startTimeFilter.value);
+  if (filters.startTime) {
+    query.set("start_time", filters.startTime);
   }
 
-  if (endTimeFilter.value) {
-    query.set("end_time", endTimeFilter.value);
+  if (filters.endTime) {
+    query.set("end_time", filters.endTime);
   }
 
   const queryString = query.toString();
@@ -262,6 +343,15 @@ async function clearFilters() {
   levelFilter.value = "";
   startTimeFilter.value = "";
   endTimeFilter.value = "";
+  appliedFilters.value = {
+    keyword: "",
+    level: "",
+    startTime: "",
+    endTime: "",
+  };
+  selectedLogId.value = null;
+  selectedLog.value = null;
+  analysisResult.value = null;
   await loadLogs();
 }
 
@@ -414,17 +504,36 @@ onMounted(async () => {
               <p class="eyebrow">Upload</p>
               <h2>上传日志</h2>
             </div>
-            <span class="tag">{{ uploadResult?.status || "等待" }}</span>
+            <span class="tag">{{ uploadFiles.length > 0 ? `${uploadFiles.length} 个文件` : "等待" }}</span>
           </div>
 
-          <label class="field-label" for="log-file">日志文件</label>
-          <input id="log-file" class="file-input" type="file" accept=".log,.txt,text/plain" @change="onFileChange" />
+          <div
+            class="drop-zone"
+            :class="{ active: isDragActive }"
+            @dragenter.prevent="onDragEnter"
+            @dragover.prevent="onDragEnter"
+            @dragleave.prevent="onDragLeave"
+            @drop.prevent="onDrop"
+          >
+            <label class="drop-label" for="log-file">
+              <strong>{{ uploadFiles.length > 0 ? `已选择 ${uploadFiles.length} 个文件` : "拖入日志文件" }}</strong>
+              <span>支持 .log / .txt，可一次选择多个文件</span>
+            </label>
+            <input id="log-file" class="file-input" type="file" accept=".log,.txt,text/plain" multiple @change="onFileChange" />
+          </div>
+
+          <ul v-if="uploadFiles.length > 0" class="selected-files">
+            <li v-for="file in uploadFiles" :key="`${file.name}-${file.size}`">
+              <span>{{ file.name }}</span>
+              <em>{{ formatBytes(file.size) }}</em>
+            </li>
+          </ul>
 
           <button class="primary-button full-button" type="button" :disabled="uploadLoading" @click="submitUpload">
-            {{ uploadLoading ? "上传中" : "上传并解析" }}
+            {{ uploadLoading ? "上传中" : uploadFiles.length > 1 ? "批量上传并解析" : "上传并解析" }}
           </button>
 
-          <dl v-if="uploadResult" class="meta-list">
+          <dl v-if="uploadResult && !uploadResult.items" class="meta-list">
             <div>
               <dt>ID</dt>
               <dd>#{{ uploadResult.id }}</dd>
@@ -438,6 +547,21 @@ onMounted(async () => {
               <dd>{{ uploadResult.parsed_entries }}</dd>
             </div>
           </dl>
+
+          <dl v-if="uploadResult?.items" class="meta-list">
+            <div>
+              <dt>上传数量</dt>
+              <dd>{{ uploadResult.uploaded_count }}</dd>
+            </div>
+            <div>
+              <dt>最后日志 ID</dt>
+              <dd>#{{ uploadResult.items.at(-1)?.id }}</dd>
+            </div>
+            <div>
+              <dt>总解析行数</dt>
+              <dd>{{ uploadResult.items.reduce((total, item) => total + item.parsed_entries, 0) }}</dd>
+            </div>
+          </dl>
         </section>
 
         <section class="panel list-panel">
@@ -447,20 +571,22 @@ onMounted(async () => {
               <h2>日志列表</h2>
             </div>
             <div class="button-row">
-              <button class="secondary-button" type="button" :disabled="logsLoading" @click="clearFilters">清空</button>
-              <button class="primary-button" type="button" :disabled="logsLoading" @click="loadLogs">
+              <button class="secondary-button" type="button" :disabled="logsLoading" @click="clearFilters">重置筛选</button>
+              <button class="primary-button" type="button" :disabled="logsLoading" @click="applyFilters">
                 {{ logsLoading ? "加载中" : "查询" }}
               </button>
             </div>
           </div>
 
+          <p class="filter-help">筛选范围包括文件名和已解析的日志内容；时间范围基于日志行中解析出的时间戳。</p>
+
           <div class="filter-grid">
             <label>
               <span>关键词</span>
-              <input v-model="keywordFilter" type="search" placeholder="timeout" />
+              <input v-model="keywordFilter" type="search" placeholder="文件名或日志内容，如 timeout" />
             </label>
             <label>
-              <span>级别</span>
+              <span>日志级别</span>
               <select v-model="levelFilter">
                 <option value="">全部</option>
                 <option value="ERROR">ERROR</option>
@@ -477,6 +603,14 @@ onMounted(async () => {
               <span>结束时间</span>
               <input v-model="endTimeFilter" type="text" placeholder="2026-04-28T11:00:00" />
             </label>
+          </div>
+
+          <div class="applied-filters">
+            <span class="applied-label">当前列表：</span>
+            <template v-if="hasAppliedFilters">
+              <span v-for="tag in appliedFilterTags" :key="tag" class="filter-chip">{{ tag }}</span>
+            </template>
+            <span v-else class="filter-chip muted">全部日志</span>
           </div>
 
           <div class="table-wrap">
@@ -509,7 +643,9 @@ onMounted(async () => {
             </table>
           </div>
 
-          <p v-if="logs.length === 0" class="empty-state">暂无日志</p>
+          <p v-if="logs.length === 0" class="empty-state">
+            {{ hasAppliedFilters ? "当前筛选条件没有匹配日志" : "暂无日志" }}
+          </p>
         </section>
       </section>
 
@@ -526,6 +662,10 @@ onMounted(async () => {
                 {{ analysisLoading ? "分析中" : "分析" }}
               </button>
             </div>
+          </div>
+
+          <div v-if="hasAppliedFilters" class="detail-filter-note">
+            当前详情仅显示符合列表筛选条件的日志行。
           </div>
 
           <dl v-if="selectedLog" class="meta-list detail-meta">
