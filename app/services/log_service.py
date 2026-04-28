@@ -45,10 +45,17 @@ class LogService:
         entries = parse_log_entries(file_bytes.decode("utf-8", errors="replace"))
 
         with get_connection() as connection:
+            max_row = connection.execute(
+                "SELECT COALESCE(MAX(user_local_id), 0) AS max_id FROM logs WHERE user_id = %s",
+                (user.id,),
+            ).fetchone()
+            user_local_id = max_row["max_id"] + 1
+
             row = connection.execute(
                 """
                 INSERT INTO logs (
                     user_id,
+                    user_local_id,
                     original_filename,
                     stored_filename,
                     storage_path,
@@ -56,11 +63,12 @@ class LogService:
                     size_bytes,
                     status
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
                     user.id,
+                    user_local_id,
                     original_filename,
                     stored_filename,
                     str(storage_path),
@@ -97,7 +105,7 @@ class LogService:
                 )
 
         return LogUploadResponse(
-            id=log_id,
+            id=user_local_id,
             filename=original_filename,
             status="parsed",
             parsed_entries=len(entries),
@@ -135,6 +143,7 @@ class LogService:
                 f"""
                 SELECT
                     l.id,
+                    l.user_local_id,
                     l.original_filename,
                     l.status,
                     l.uploaded_at,
@@ -163,7 +172,7 @@ class LogService:
 
     def get_log(
         self,
-        log_id: int,
+        user_local_id: int,
         user: User,
         keyword: str | None = None,
         level: str | None = None,
@@ -171,12 +180,12 @@ class LogService:
         end_time: str | None = None,
     ) -> LogDetailResponse:
         initialize_database()
-        log = self._get_log_row(log_id, user)
-        entries = self._get_entry_rows(log_id, keyword, level, start_time, end_time)
-        stats = self._get_log_stats(log_id)
+        log = self._get_log_row(user_local_id, user)
+        entries = self._get_entry_rows(log["id"], keyword, level, start_time, end_time)
+        stats = self._get_log_stats(log["id"])
 
         return LogDetailResponse(
-            id=log["id"],
+            id=user_local_id,
             filename=log["original_filename"],
             status=log["status"],
             owner_email=log["owner_email"],
@@ -189,9 +198,10 @@ class LogService:
             warn_count=stats["warn_count"],
         )
 
-    def analyze(self, log_id: int, user: User) -> AnalyzeResponse:
+    def analyze(self, user_local_id: int, user: User) -> AnalyzeResponse:
         initialize_database()
-        self._get_log_row(log_id, user)
+        log = self._get_log_row(user_local_id, user)
+        log_id = log["id"]
         stats = self._get_log_stats(log_id)
 
         with get_connection() as connection:
@@ -201,7 +211,7 @@ class LogService:
             )
 
         return AnalyzeResponse(
-            log_id=log_id,
+            log_id=user_local_id,
             status="analyzed",
             summary=(
                 f"Parsed {stats['parsed_entries']} lines. "
@@ -212,12 +222,13 @@ class LogService:
             warn_count=stats["warn_count"],
         )
 
-    def _get_log_row(self, log_id: int, user: User) -> dict[str, Any]:
+    def _get_log_row(self, user_local_id: int, user: User) -> dict[str, Any]:
         with get_connection() as connection:
             row = connection.execute(
                 """
                 SELECT
                     l.id,
+                    l.user_local_id,
                     l.original_filename,
                     l.status,
                     l.uploaded_at,
@@ -226,9 +237,9 @@ class LogService:
                     u.email AS owner_email
                 FROM logs l
                 JOIN users u ON u.id = l.user_id
-                WHERE l.id = %s AND l.user_id = %s
+                WHERE l.user_local_id = %s AND l.user_id = %s
                 """,
-                (log_id, user.id),
+                (user_local_id, user.id),
             ).fetchone()
 
         if not row:
@@ -362,7 +373,7 @@ class LogService:
     @staticmethod
     def _row_to_summary(row: dict[str, Any]) -> LogSummary:
         return LogSummary(
-            id=row["id"],
+            id=row["user_local_id"],
             filename=row["original_filename"],
             status=row["status"],
             owner_email=row["owner_email"],

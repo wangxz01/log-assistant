@@ -39,13 +39,15 @@ def initialize_database() -> None:
             CREATE TABLE IF NOT EXISTS logs (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                user_local_id INTEGER NOT NULL,
                 original_filename VARCHAR(255) NOT NULL,
                 stored_filename VARCHAR(255) NOT NULL,
                 storage_path TEXT NOT NULL,
                 content_type VARCHAR(255),
                 size_bytes INTEGER NOT NULL,
                 status VARCHAR(50) NOT NULL DEFAULT 'uploaded',
-                uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (user_id, user_local_id)
             );
             """
         )

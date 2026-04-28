@@ -12,6 +12,7 @@
 - 用户表自动初始化、重复邮箱检查、密码最小长度校验、加盐密码哈希和数据库保存
 - 登录时根据邮箱查询用户、校验密码并生成签名 access token
 - 日志接口基于 Bearer token 识别当前用户，日志数据按账号隔离
+- 日志编号按用户独立计数，每个用户的日志从 #1 开始递增，互不影响
 - 真实日志上传：接收文件、保存文件、写入数据库并返回日志 ID
 - 批量日志上传：前端可一次选择多个日志文件，后端逐个保存、解析并返回结果列表
 - 前端支持点击选择或拖拽上传日志文件
@@ -82,6 +83,8 @@ tools/
 
 ## 使用 Docker Compose 启动
 
+首次启动或修改了依赖（`requirements.txt`、`package.json`）时：
+
 ```bash
 docker compose up --build
 ```
@@ -94,7 +97,12 @@ docker compose up --build
 
 前端在 Docker Compose 中会通过 `/api` 代理访问 `api` 服务。
 
-首次修改后端、前端或依赖时，建议使用 `--build` 重新构建镜像。
+容器已挂载源码目录并开启热更新，修改代码后无需重新构建：
+
+- 后端：uvicorn `--reload` 自动检测 `app/` 下文件变动并重启服务
+- 前端：Vite HMR 自动热更新 `frontend/src/` 下的组件
+
+仅当修改了 `requirements.txt` 或 `package.json` 等依赖文件时才需要重新 `docker compose up --build`。
 
 前端上传控件支持点击选择和拖拽上传。选择一个文件时调用 `POST /logs/upload`，选择多个文件时调用 `POST /logs/upload/batch`。
 

@@ -44,10 +44,11 @@ def test_other_user_cannot_access_log_detail(monkeypatch: pytest.MonkeyPatch) ->
     owner = User(id=1, email="owner@example.com", password_hash="hash")
     other_user = User(id=2, email="other@example.com", password_hash="hash")
 
-    def fake_get_log_row(log_id: int, user: User) -> dict[str, object]:
-        if log_id == 1 and user.id == owner.id:
+    def fake_get_log_row(user_local_id: int, user: User) -> dict[str, object]:
+        if user_local_id == 1 and user.id == owner.id:
             return {
                 "id": 1,
+                "user_local_id": 1,
                 "original_filename": "owner.log",
                 "status": "parsed",
                 "owner_email": owner.email,
@@ -71,7 +72,7 @@ def test_other_user_cannot_analyze_log(monkeypatch: pytest.MonkeyPatch) -> None:
     service = LogService()
     other_user = User(id=2, email="other@example.com", password_hash="hash")
 
-    def fake_get_log_row(log_id: int, user: User) -> dict[str, object]:
+    def fake_get_log_row(user_local_id: int, user: User) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Log not found.")
 
     monkeypatch.setattr("app.services.log_service.initialize_database", lambda: None)
