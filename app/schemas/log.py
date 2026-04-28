@@ -36,6 +36,7 @@ class LogEntryResponse(BaseModel):
     line_number: int
     timestamp: str | None = None
     level: str | None = None
+    service_name: str | None = None
     message: str
     is_key_event: bool
 

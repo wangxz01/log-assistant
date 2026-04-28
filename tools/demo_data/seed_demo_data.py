@@ -87,10 +87,11 @@ def main() -> None:
                     event_time,
                     timestamp_text,
                     level,
+                    service_name,
                     message,
                     is_key_event
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     log_id,
@@ -98,6 +99,7 @@ def main() -> None:
                     entry["event_time"],
                     entry["timestamp_text"],
                     entry["level"],
+                    entry["service_name"],
                     entry["message"],
                     entry["is_key_event"],
                 ),

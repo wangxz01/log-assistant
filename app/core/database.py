@@ -60,10 +60,14 @@ def initialize_database() -> None:
                 event_time TIMESTAMPTZ,
                 timestamp_text TEXT,
                 level VARCHAR(20),
+                service_name VARCHAR(255),
                 message TEXT NOT NULL,
                 is_key_event BOOLEAN NOT NULL DEFAULT FALSE
             );
             """
+        )
+        connection.execute(
+            "ALTER TABLE log_entries ADD COLUMN IF NOT EXISTS service_name VARCHAR(255);"
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_logs_user_id ON logs(user_id);"
@@ -76,6 +80,9 @@ def initialize_database() -> None:
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_log_entries_level ON log_entries(level);"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_log_entries_service_name ON log_entries(service_name);"
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_log_entries_event_time ON log_entries(event_time);"

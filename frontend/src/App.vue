@@ -26,6 +26,7 @@ const authPassword = ref("");
 const authLoading = ref(false);
 const authResult = ref(null);
 const authNotice = ref("");
+const sessionLoading = ref(true);
 const token = ref("");
 const currentEmail = ref("");
 const lastResponse = ref(null);
@@ -41,7 +42,7 @@ const appliedFilters = ref({
   endTime: "",
 });
 
-const isAuthenticated = computed(() => Boolean(token.value));
+const isAuthenticated = computed(() => Boolean(currentEmail.value || token.value));
 const apiStatusText = computed(() => (health.value?.status === "ok" ? "后端在线" : "后端未连接"));
 const totalErrors = computed(() => logs.value.reduce((total, item) => total + (item.error_count || 0), 0));
 const totalWarnings = computed(() => logs.value.reduce((total, item) => total + (item.warn_count || 0), 0));
@@ -125,12 +126,12 @@ const highFrequencyExceptions = computed(() => {
 const keyInformationGroups = computed(() => [
   {
     title: "涉及服务",
-    items: topExtractedValues(selectedEntries.value, extractServiceName),
+    items: topExtractedValues(selectedEntries.value, (entry) => entry.service_name || extractServiceName(entry.message)),
     empty: "未识别到服务名",
   },
   {
     title: "请求链路",
-    items: topExtractedValues(selectedEntries.value, extractRequestId),
+    items: topExtractedValues(selectedEntries.value, (entry) => extractRequestId(entry.message)),
     empty: "未识别到请求 ID",
   },
   {
@@ -143,17 +144,19 @@ const keyEventTimeline = computed(() => keyEntries.value.slice(0, 8));
 
 async function requestApi(path, options = {}) {
   errorMessage.value = "";
+  const { silent = false, ...fetchOptions } = options;
 
   try {
-    const headers = new Headers(options.headers || {});
+    const headers = new Headers(fetchOptions.headers || {});
 
     if (token.value && path.startsWith("/logs")) {
       headers.set("Authorization", `Bearer ${token.value}`);
     }
 
     const response = await fetch(`${apiBaseUrl}${path}`, {
-      ...options,
+      ...fetchOptions,
       headers,
+      credentials: "include",
     });
     const contentType = response.headers.get("content-type") || "";
     const body = contentType.includes("application/json") ? await response.json() : await response.text();
@@ -171,7 +174,9 @@ async function requestApi(path, options = {}) {
 
     return body;
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : "请求失败";
+    if (!silent) {
+      errorMessage.value = error instanceof Error ? error.message : "请求失败";
+    }
     throw error;
   }
 }
@@ -233,7 +238,30 @@ async function submitAuth() {
   }
 }
 
-function logout() {
+async function restoreSession() {
+  sessionLoading.value = true;
+
+  try {
+    const user = await requestApi("/auth/me", { silent: true });
+    currentEmail.value = user.email;
+    token.value = "";
+    activeView.value = "workspace";
+    await loadLogs();
+  } catch {
+    currentEmail.value = "";
+    token.value = "";
+  } finally {
+    sessionLoading.value = false;
+  }
+}
+
+async function logout() {
+  try {
+    await requestApi("/auth/logout", { method: "POST", silent: true });
+  } catch {
+    // Local state should still be cleared if the server is temporarily unreachable.
+  }
+
   token.value = "";
   currentEmail.value = "";
   logs.value = [];
@@ -569,7 +597,7 @@ function topExtractedValues(entries, extractor) {
   const counts = new Map();
 
   for (const entry of entries) {
-    const value = extractor(entry.message);
+    const value = extractor(entry);
     if (!value) continue;
     counts.set(value, (counts.get(value) || 0) + 1);
   }
@@ -625,11 +653,28 @@ function topKeywordHits(entries) {
 
 onMounted(async () => {
   await checkHealth();
+  await restoreSession();
 });
 </script>
 
 <template>
-  <main v-if="!isAuthenticated" class="auth-page">
+  <main v-if="sessionLoading" class="auth-page">
+    <section class="auth-panel">
+      <div class="auth-brand">
+        <div class="brand-mark">LA</div>
+        <div>
+          <p class="eyebrow">Log Assistant</p>
+          <h1>正在恢复登录状态</h1>
+        </div>
+      </div>
+      <div class="auth-footer">
+        <span class="status-dot" :class="{ online: health?.status === 'ok' }"></span>
+        <span>{{ apiStatusText }}</span>
+      </div>
+    </section>
+  </main>
+
+  <main v-else-if="!isAuthenticated" class="auth-page">
     <section class="auth-panel">
       <div class="auth-brand">
         <div class="brand-mark">LA</div>
@@ -1021,6 +1066,7 @@ onMounted(async () => {
                     <th>行</th>
                     <th>时间</th>
                     <th>级别</th>
+                    <th>服务/模块</th>
                     <th>内容</th>
                   </tr>
                 </thead>
@@ -1029,6 +1075,7 @@ onMounted(async () => {
                     <td>{{ entry.line_number }}</td>
                     <td>{{ entry.timestamp || "-" }}</td>
                     <td><span class="tag">{{ entry.level || "-" }}</span></td>
+                    <td>{{ entry.service_name || "-" }}</td>
                     <td>{{ entry.message }}</td>
                   </tr>
                 </tbody>

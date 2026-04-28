@@ -12,8 +12,8 @@ def test_parse_log_entries_extracts_timestamp_level_and_message() -> None:
     content = "\n".join(
         [
             "2026-04-28 10:00:00 INFO service started",
-            "2026-04-28T10:01:00Z WARN disk usage high",
-            "2026-04-28T10:02:00+00:00 ERROR failed to connect to database",
+            "2026-04-28T10:01:00Z WARN service=checkout disk usage high",
+            "2026-04-28T10:02:00+00:00 ERROR module=payment failed to connect to database",
         ]
     )
 
@@ -24,9 +24,17 @@ def test_parse_log_entries_extracts_timestamp_level_and_message() -> None:
     assert entries[0]["level"] == "INFO"
     assert entries[0]["is_key_event"] is False
     assert entries[1]["level"] == "WARN"
+    assert entries[1]["service_name"] == "checkout"
     assert entries[1]["is_key_event"] is True
     assert entries[2]["level"] == "ERROR"
+    assert entries[2]["service_name"] == "payment"
     assert entries[2]["is_key_event"] is True
+
+
+def test_parse_log_entries_extracts_bracket_service_name() -> None:
+    entries = parse_log_entries("2026-04-28T10:03:00Z ERROR [api-gateway] upstream timeout")
+
+    assert entries[0]["service_name"] == "api-gateway"
 
 
 def test_access_token_can_be_decoded() -> None:

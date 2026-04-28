@@ -30,6 +30,11 @@ TIMESTAMP_PATTERN = re.compile(
     r")"
 )
 LEVEL_PATTERN = re.compile(r"\b(?P<level>TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\b", re.IGNORECASE)
+SERVICE_FIELD_PATTERN = re.compile(
+    r"\b(?:service|module|component|logger|app)[=:]\s*(?P<service>[\w.-]+)",
+    re.IGNORECASE,
+)
+BRACKET_SERVICE_PATTERN = re.compile(r"\[(?P<service>[a-z][\w.-]{2,})\]", re.IGNORECASE)
 KEY_LEVELS = {"WARN", "WARNING", "ERROR", "FATAL", "CRITICAL"}
 
 
@@ -91,10 +96,11 @@ class LogService:
                         event_time,
                         timestamp_text,
                         level,
+                        service_name,
                         message,
                         is_key_event
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         log_id,
@@ -102,6 +108,7 @@ class LogService:
                         entry["event_time"],
                         entry["timestamp_text"],
                         entry["level"],
+                        entry["service_name"],
                         entry["message"],
                         entry["is_key_event"],
                     ),
@@ -318,8 +325,8 @@ class LogService:
         params: list[Any] = [log_id]
 
         if keyword:
-            where_clauses.append("message ILIKE %s")
-            params.append(f"%{keyword}%")
+            where_clauses.append("(message ILIKE %s OR service_name ILIKE %s)")
+            params.extend([f"%{keyword}%", f"%{keyword}%"])
 
         if level:
             where_clauses.append("level = %s")
@@ -338,7 +345,7 @@ class LogService:
         with get_connection() as connection:
             return connection.execute(
                 f"""
-                SELECT id, line_number, timestamp_text, level, message, is_key_event
+                SELECT id, line_number, timestamp_text, level, service_name, message, is_key_event
                 FROM log_entries
                 WHERE {" AND ".join(where_clauses)}
                 ORDER BY line_number ASC
@@ -386,12 +393,13 @@ class LogService:
                     l.original_filename ILIKE %s
                     OR EXISTS (
                         SELECT 1 FROM log_entries e
-                        WHERE e.log_id = l.id AND e.message ILIKE %s
+                        WHERE e.log_id = l.id
+                        AND (e.message ILIKE %s OR e.service_name ILIKE %s)
                     )
                 )
                 """
             )
-            params.extend([f"%{keyword}%", f"%{keyword}%"])
+            params.extend([f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"])
 
         if level:
             where_clauses.append(
@@ -455,6 +463,7 @@ class LogService:
             line_number=row["line_number"],
             timestamp=row["timestamp_text"],
             level=row["level"],
+            service_name=row["service_name"],
             message=row["message"],
             is_key_event=row["is_key_event"],
         )
@@ -480,12 +489,14 @@ def parse_log_entries(content: str) -> list[dict[str, Any]]:
 
         timestamp_text = _extract_timestamp(message)
         level = _extract_level(message)
+        service_name = _extract_service_name(message)
         entries.append(
             {
                 "line_number": index,
                 "event_time": _parse_event_time(timestamp_text),
                 "timestamp_text": timestamp_text,
                 "level": level,
+                "service_name": service_name,
                 "message": message,
                 "is_key_event": bool(level in KEY_LEVELS),
             }
@@ -506,6 +517,15 @@ def _extract_level(line: str) -> str | None:
         return None
 
     return _normalize_level(match.group("level"))
+
+
+def _extract_service_name(line: str) -> str | None:
+    match = SERVICE_FIELD_PATTERN.search(line)
+    if match:
+        return match.group("service")
+
+    bracket_match = BRACKET_SERVICE_PATTERN.search(line)
+    return bracket_match.group("service") if bracket_match else None
 
 
 def _normalize_level(level: str) -> str:

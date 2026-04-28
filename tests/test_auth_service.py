@@ -6,6 +6,9 @@ import psycopg
 import pytest
 from fastapi import HTTPException
 
+from app.api import dependencies as dependencies_module
+from app.api.dependencies import get_current_user
+from app.core.security import create_access_token
 from app.schemas.auth import LoginRequest, RegisterRequest
 from app.services import auth_service as auth_module
 from app.services.auth_service import AuthService
@@ -102,6 +105,30 @@ def test_login_rejects_wrong_password(fake_users: dict[str, dict[str, Any]]) -> 
         service.login(LoginRequest(email="student@example.com", password="wrong-password"))
 
     assert exc_info.value.status_code == 401
+
+
+def test_current_user_can_be_loaded_from_cookie_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = {"id": 5, "email": "student@example.com", "password_hash": "hash"}
+
+    class CookieConnection:
+        def __enter__(self) -> "CookieConnection":
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple[str, ...]) -> FakeResult:
+            assert params == ("5",)
+            return FakeResult(row)
+
+    monkeypatch.setattr(dependencies_module, "initialize_database", lambda: None)
+    monkeypatch.setattr(dependencies_module, "get_connection", lambda: CookieConnection())
+
+    token = create_access_token(subject="5", extra_claims={"email": row["email"]})
+    current_user = get_current_user(credentials=None, access_token=token)
+
+    assert current_user.id == 5
+    assert current_user.email == "student@example.com"
 
 
 def _decode_jwt_payload(token: str) -> dict[str, Any]:
