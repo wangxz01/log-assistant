@@ -52,8 +52,13 @@ def analyze_log_content(log_content: str) -> dict[str, str]:
                 "suggestions": "请重新尝试分析。",
             }
 
+    def to_str(value):
+        if isinstance(value, list):
+            return "\n".join(str(item) for item in value)
+        return str(value) if value is not None else ""
+
     return {
-        "summary": result.get("summary", ""),
-        "causes": result.get("causes", ""),
-        "suggestions": result.get("suggestions", ""),
+        "summary": to_str(result.get("summary", "")),
+        "causes": to_str(result.get("causes", "")),
+        "suggestions": to_str(result.get("suggestions", "")),
     }
