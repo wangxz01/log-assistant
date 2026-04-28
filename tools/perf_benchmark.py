@@ -95,12 +95,16 @@ def main() -> None:
             ).fetchone()
             log_id = log_row["id"]
 
-            for entry in entries:
-                conn.execute(
+            if entries:
+                cur = conn.cursor()
+                cur.executemany(
                     """INSERT INTO log_entries (log_id, line_number, event_time, timestamp_text, level, service_name, message, is_key_event)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (log_id, entry["line_number"], entry["event_time"], entry["timestamp_text"],
-                     entry["level"], entry["service_name"], entry["message"], entry["is_key_event"]),
+                    [
+                        (log_id, entry["line_number"], entry["event_time"], entry["timestamp_text"],
+                         entry["level"], entry["service_name"], entry["message"], entry["is_key_event"])
+                        for entry in entries
+                    ],
                 )
             return log_id
 

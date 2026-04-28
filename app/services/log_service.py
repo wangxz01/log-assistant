@@ -113,8 +113,9 @@ class LogService:
             ).fetchone()
             log_id = row["id"]
 
-            for entry in entries:
-                connection.execute(
+            if entries:
+                cursor = connection.cursor()
+                cursor.executemany(
                     """
                     INSERT INTO log_entries (
                         log_id,
@@ -128,16 +129,19 @@ class LogService:
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (
-                        log_id,
-                        entry["line_number"],
-                        entry["event_time"],
-                        entry["timestamp_text"],
-                        entry["level"],
-                        entry["service_name"],
-                        entry["message"],
-                        entry["is_key_event"],
-                    ),
+                    [
+                        (
+                            log_id,
+                            entry["line_number"],
+                            entry["event_time"],
+                            entry["timestamp_text"],
+                            entry["level"],
+                            entry["service_name"],
+                            entry["message"],
+                            entry["is_key_event"],
+                        )
+                        for entry in entries
+                    ],
                 )
 
         return LogUploadResponse(
