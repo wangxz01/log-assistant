@@ -70,27 +70,7 @@ def get_analyze_status(
     log_id: int,
     current_user: User = Depends(get_current_user),
 ) -> AnalyzeStatusResponse:
-    from app.services.task_queue import get_task_by_log, get_task_status
-
-    from app.core.database import initialize_database
-
-    initialize_database()
-    task_id = get_task_by_log(log_id, current_user.id)
-    if not task_id:
-        return AnalyzeStatusResponse(task_id="", status="none")
-
-    data = get_task_status(task_id)
-    if not data:
-        return AnalyzeStatusResponse(task_id=task_id, status="none")
-
-    return AnalyzeStatusResponse(
-        task_id=task_id,
-        status=data.get("status", "none"),
-        summary=data.get("summary"),
-        causes=data.get("causes"),
-        suggestions=data.get("suggestions"),
-        error=data.get("error"),
-    )
+    return log_service.get_analyze_status(log_id, current_user)
 
 
 @router.get("/{log_id}/analyses", response_model=AnalysisHistoryResponse)

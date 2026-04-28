@@ -13,6 +13,7 @@ from app.schemas.log import (
     AnalysisHistoryResponse,
     AnalysisRecord,
     AnalyzeResponse,
+    AnalyzeStatusResponse,
     BatchLogUploadResponse,
     LogDetailResponse,
     LogEntryResponse,
@@ -225,6 +226,30 @@ class LogService:
             log_id=user_local_id,
             task_id=task_id,
             status="pending",
+        )
+
+    def get_analyze_status(self, user_local_id: int, user: User) -> AnalyzeStatusResponse:
+        initialize_database()
+        log = self._get_log_row(user_local_id, user)
+        log_id = log["id"]
+
+        from app.services.task_queue import get_task_by_log, get_task_status
+
+        task_id = get_task_by_log(log_id, user.id)
+        if not task_id:
+            return AnalyzeStatusResponse(task_id="", status="none")
+
+        data = get_task_status(task_id)
+        if not data:
+            return AnalyzeStatusResponse(task_id=task_id, status="none")
+
+        return AnalyzeStatusResponse(
+            task_id=task_id,
+            status=data.get("status", "none"),
+            summary=data.get("summary"),
+            causes=data.get("causes"),
+            suggestions=data.get("suggestions"),
+            error=data.get("error"),
         )
 
     def list_analyses(self, user_local_id: int, user: User) -> AnalysisHistoryResponse:

@@ -82,3 +82,47 @@ def test_other_user_cannot_analyze_log(monkeypatch: pytest.MonkeyPatch) -> None:
         service.analyze(1, other_user)
 
     assert exc_info.value.status_code == 404
+
+
+def test_analyze_status_uses_internal_log_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = LogService()
+    user = User(id=7, email="owner@example.com", password_hash="hash")
+    calls: list[tuple[int, int]] = []
+
+    def fake_get_log_row(user_local_id: int, current_user: User) -> dict[str, object]:
+        assert user_local_id == 1
+        assert current_user.id == user.id
+        return {
+            "id": 42,
+            "user_local_id": 1,
+            "original_filename": "owner.log",
+            "status": "parsed",
+            "owner_email": user.email,
+            "uploaded_at": datetime(2026, 4, 28, 10, 0, 0),
+            "size_bytes": 128,
+            "storage_path": "/tmp/owner.log",
+        }
+
+    def fake_get_task_by_log(log_id: int, user_id: int) -> str:
+        calls.append((log_id, user_id))
+        return "task-1"
+
+    def fake_get_task_status(task_id: str) -> dict[str, str]:
+        assert task_id == "task-1"
+        return {
+            "status": "completed",
+            "summary": "done",
+            "causes": "none",
+            "suggestions": "keep monitoring",
+        }
+
+    monkeypatch.setattr("app.services.log_service.initialize_database", lambda: None)
+    monkeypatch.setattr(service, "_get_log_row", fake_get_log_row)
+    monkeypatch.setattr("app.services.task_queue.get_task_by_log", fake_get_task_by_log)
+    monkeypatch.setattr("app.services.task_queue.get_task_status", fake_get_task_status)
+
+    response = service.get_analyze_status(1, user)
+
+    assert calls == [(42, 7)]
+    assert response.status == "completed"
+    assert response.summary == "done"

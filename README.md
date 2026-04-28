@@ -1,35 +1,101 @@
 # Log Assistant
 
-智能日志分析助手，支持日志上传、解析、筛选和 AI 分析。FastAPI 后端 + Vue 3 前端，PostgreSQL 存储，Docker Compose 一键部署。
+Log Assistant 是一个面向日志排障场景的智能分析平台。项目已经完成从账号体系、日志上传、日志解析、筛选检索，到异步 AI 分析和可视化排障面板的完整主链路。
 
-## 功能
+当前版本适合用于课程项目、面试展示和后续功能扩展：代码结构清晰，功能边界明确，能够通过 Docker Compose 一条命令启动前端、后端、PostgreSQL 和 Redis。
 
-- 用户注册/登录，JWT 鉴权，日志数据按账号隔离
-- 日志上传（单文件/批量/拖拽），自动解析时间戳、级别、内容
-- 日志列表筛选（关键词、状态、时间范围）
-- 用户级日志编号，每个用户的日志从 #1 独立递增
-- AI 驱动的日志分析（调用 DeepSeek API），产出摘要、异常原因和排障建议
-- 异步后台分析，基于 Redis 任务队列，前端实时轮询进度
-- 分析历史记录，支持查看历次分析结果
-- Docker Compose 一键启动（API、前端、PostgreSQL、Redis），开发环境热更新
+## 项目亮点
+
+- **业务链路完整**：注册/登录 → 上传日志 → 解析日志 → 查看详情 → 异步分析 → 查看排障结果。
+- **账号数据隔离**：日志按用户隔离，每个用户只能访问自己的日志和分析记录。
+- **真实后端能力**：不是纯前端 demo，日志文件会保存到磁盘，元数据和解析结果会进入 PostgreSQL。
+- **异步分析流程**：分析任务提交后进入 Redis 状态管理，前端轮询展示排队、分析中、完成、失败等状态。
+- **AI 排障结果**：通过 DeepSeek API 生成摘要、异常原因和排障建议，并保存历史分析记录。
+- **展示型排障面板**：前端聚合高频异常、关键服务、请求链路、问题关键词和关键事件时间线，适合演示。
+- **一键本地部署**：Docker Compose 同时启动 API、前端、PostgreSQL、Redis，开发环境支持热更新。
+- **可复现演示数据**：提供 demo 数据脚本和截图，方便快速展示项目效果。
+
+## 界面预览
+
+![排障面板](docs/images/troubleshooting-dashboard.png)
+
+## 已完成功能
+
+### 认证与权限
+
+- 用户注册
+- 用户登录
+- 密码 PBKDF2-SHA256 加盐哈希
+- JWT 鉴权
+- 日志数据按账号隔离
+- 其他用户访问日志详情或分析结果时返回 404
+
+### 日志管理
+
+- 单文件上传
+- 批量上传
+- 拖拽上传
+- 文件保存到 `assets/uploads/`
+- 数据库存储文件名、大小、状态、上传时间、所属用户
+- 用户级日志编号：每个用户的日志从 `#1` 独立递增
+
+### 日志解析与检索
+
+- 提取时间戳
+- 提取日志级别
+- 提取日志内容
+- 识别 `ERROR`、`WARN`、`FATAL`、`CRITICAL` 等关键事件
+- 日志列表支持按关键词、状态、时间范围筛选
+- 日志详情展示原始片段、解析行、ERROR/WARN 统计
+
+### AI 分析
+
+- `POST /logs/{id}/analyze` 提交真实分析任务
+- Redis 保存任务状态：`pending`、`running`、`completed`、`failed`
+- 后台线程执行分析，避免阻塞请求
+- 分析完成后写入 `analysis_records`
+- 前端实时轮询任务状态并刷新结果
+- 支持查看历史分析记录
+
+### 排障面板
+
+- 高频异常统计
+- 关键信息聚合
+- 关键事件时间线
+- AI 摘要
+- 异常原因
+- 排障建议
+- 分析历史回看
+
+## 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| 后端 | Python 3.11, FastAPI |
+| 数据库 | PostgreSQL |
+| 队列/状态 | Redis |
+| 前端 | Vue 3, Vite |
+| AI 分析 | DeepSeek API, OpenAI SDK |
+| 测试 | pytest |
+| 部署 | Docker Compose |
 
 ## 快速开始
 
 ### 1. 配置环境变量
 
-复制示例文件并填写 DeepSeek API Key：
+复制示例文件：
 
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env`，填入你的 API Key：
+编辑 `.env`，填入 DeepSeek API Key：
 
-```
+```bash
 DEEPSEEK_API_KEY=your-deepseek-api-key
 ```
 
-> 不配置 API Key 时项目仍可正常启动，但 AI 分析功能不可用。
+不配置 API Key 时，注册、登录、上传、解析、列表、筛选、demo 数据仍可使用；AI 在线分析会不可用。
 
 ### 2. 启动服务
 
@@ -45,24 +111,44 @@ docker compose up --build
 
 ### 3. 使用流程
 
-1. 在登录页注册账号并登录
-2. 在工作台上传日志文件（`.log` / `.txt`）
-3. 在日志列表中按关键词、状态、时间筛选
-4. 点击日志条目进入详情页
-5. 点击「分析」按钮，任务提交到后台队列，前端实时显示进度（排队中 → 分析中）
-6. 分析完成后自动展示摘要、异常原因（列表）和排障建议（列表）
-7. 右侧面板可查看分析历史记录，点击可回顾
+1. 注册账号并登录
+2. 上传 `.log` 或 `.txt` 日志文件
+3. 在日志列表中筛选和选择日志
+4. 进入日志详情页查看解析结果
+5. 点击「分析」提交异步分析任务
+6. 等待任务完成后查看排障面板、AI 摘要、异常原因和排障建议
+7. 在分析历史中查看过往结果
 
-## 开发模式
+## 演示数据
 
-容器已挂载源码并开启热更新，修改代码后无需重新构建：
+项目提供固定 demo 数据，适合课堂展示、面试讲解和截图复现。
 
-- 后端：uvicorn `--reload` 检测 `app/` 下文件变动并重启
-- 前端：Vite HMR 热更新 `frontend/src/` 下的组件
+先启动 Docker 服务，然后执行：
 
-仅修改了 `requirements.txt` 或 `package.json` 时才需重新 `docker compose up --build`。
+```bash
+docker compose exec api python tools/demo_data/seed_demo_data.py
+```
 
-## 本地调试
+执行后使用以下账号登录：
+
+- 邮箱：`demo@example.com`
+- 密码：`demo12345`
+
+脚本会重置这个 demo 账号，并写入一份已分析的结账链路故障日志。登录后进入日志详情页，可以直接查看排障面板、分析历史和原始日志片段。
+
+## 生成测试日志
+
+```bash
+# 默认生成 5 个文件，每个 120 行
+python tools/log_generator/generate_logs.py
+
+# 自定义数量和行数
+python tools/log_generator/generate_logs.py --files 10 --lines 300 --output sample_logs
+```
+
+生成的日志包含时间戳、级别、服务名、请求 ID 等字段，可直接上传测试。
+
+## 本地开发
 
 后端：
 
@@ -82,17 +168,11 @@ npm install
 npm run dev
 ```
 
-## 生成测试日志
+Docker 开发模式已挂载源码并开启热更新：
 
-```bash
-# 默认生成 5 个文件，每个 120 行
-python tools/log_generator/generate_logs.py
-
-# 自定义数量和行数
-python tools/log_generator/generate_logs.py --files 10 --lines 300 --output sample_logs
-```
-
-生成的日志包含时间戳、级别、服务名、请求 ID 等字段，可直接上传测试。
+- 后端：uvicorn `--reload` 检测 `app/` 下文件变动并重启
+- 前端：Vite HMR 热更新 `frontend/src/` 下组件
+- 工具脚本：`tools/` 已挂载到 API 容器，demo 数据脚本可直接执行
 
 ## 项目结构
 
@@ -102,34 +182,66 @@ app/
   core/             配置、数据库、安全
   models/           数据模型
   schemas/          请求/响应 schema
-  services/         业务逻辑：认证、日志、AI 分析
+  services/         业务逻辑：认证、日志、AI 分析、任务状态
 frontend/
   src/              Vue 3 + Vite 前端
 tests/              后端自动化测试
 tools/
+  demo_data/        演示数据脚本
   log_generator/    测试日志生成器
+docs/
+  images/           README 展示截图
 ```
 
-## 接口
+## API 列表
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/health` | 健康检查 |
-| POST | `/auth/register` | 注册 |
-| POST | `/auth/login` | 登录 |
-| POST | `/logs/upload` | 上传单个日志 |
-| POST | `/logs/upload/batch` | 批量上传日志 |
-| GET | `/logs` | 日志列表（支持 keyword/status/start_time/end_time 筛选） |
-| GET | `/logs/{id}` | 日志详情 |
-| POST | `/logs/{id}/analyze` | 提交 AI 分析任务（异步） |
-| GET | `/logs/{id}/analyze/status` | 查询分析任务进度和结果 |
-| GET | `/logs/{id}/analyses` | 分析历史记录 |
+| `GET` | `/health` | 健康检查 |
+| `POST` | `/auth/register` | 注册 |
+| `POST` | `/auth/login` | 登录 |
+| `POST` | `/logs/upload` | 上传单个日志 |
+| `POST` | `/logs/upload/batch` | 批量上传日志 |
+| `GET` | `/logs` | 日志列表，支持 `keyword`、`status`、`start_time`、`end_time` |
+| `GET` | `/logs/{id}` | 日志详情 |
+| `POST` | `/logs/{id}/analyze` | 提交 AI 分析任务 |
+| `GET` | `/logs/{id}/analyze/status` | 查询分析任务进度和结果 |
+| `GET` | `/logs/{id}/analyses` | 查看分析历史记录 |
+
+## 当前完成度
+
+| 里程碑 | 状态 | 说明 |
+|--------|------|------|
+| 日志上传与解析 | 已完成 | 文件保存、数据库记录、解析时间戳/级别/内容 |
+| 日志列表与详情 | 已完成 | 支持账号隔离、列表筛选、详情查看 |
+| 真实注册登录 | 已完成 | 用户表、重复邮箱检查、密码哈希、JWT |
+| AI 分析 | 已完成 | 摘要、异常原因、排障建议、历史记录 |
+| 异步分析 | 已完成 | Redis 状态、后台分析、前端轮询 |
+| 展示型结果页 | 已完成 | 高频异常、关键信息聚合、关键事件、截图 |
+
+## 待完善方向
+
+- 刷新页面后保持登录态，例如 HttpOnly Cookie 或安全的 refresh token。
+- 用独立 worker 替代当前进程内后台线程，增强生产环境可靠性。
+- 增加数据库 migration 工具，例如 Alembic。
+- 为前端补充自动化测试。
+- 日志查询继续增强分页、高亮命中、复杂组合筛选。
+- 分析面板继续增加趋势图、服务维度聚合和告警规则。
+
+## 验证
+
+当前版本已通过：
+
+```bash
+pytest -q
+cd frontend
+npm run build
+```
 
 ## 备注
 
 - `app/core/config.py` 集中管理基于环境变量的配置。
 - PostgreSQL 存储用户、日志元数据、解析结果和分析记录。
-- Redis 用于异步分析任务的状态管理（pending / running / completed / failed），任务结果保留 24 小时。
+- Redis 用于异步分析任务状态管理，任务状态默认保留 24 小时。
 - 上传文件保存在 `assets/uploads/`，Docker Compose 中使用 volume 持久化。
-- 密码使用 PBKDF2-SHA256 加盐哈希，不存储明文。
-- AI 分析通过 DeepSeek API 实现，使用 OpenAI SDK 调用，后台线程执行不阻塞请求。
+- AI 分析通过 DeepSeek API 实现，使用 OpenAI SDK 调用。

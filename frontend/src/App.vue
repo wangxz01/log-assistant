@@ -74,6 +74,72 @@ const appliedFilterTags = computed(() => {
 
   return tags;
 });
+const selectedEntries = computed(() => selectedLog.value?.entries || []);
+const keyEntries = computed(() =>
+  selectedEntries.value.filter((entry) => {
+    const level = (entry.level || "").toUpperCase();
+    return entry.is_key_event || ["WARN", "ERROR", "FATAL", "CRITICAL"].includes(level);
+  }),
+);
+const diagnosisMetrics = computed(() => {
+  const total = selectedLog.value?.total_parsed_entries || selectedEntries.value.length;
+  const errors = selectedLog.value?.total_error_count || 0;
+  const warnings = selectedLog.value?.total_warn_count || 0;
+  const keyCount = errors + warnings;
+  const riskLevel = errors > 0 ? "严重" : warnings > 0 ? "关注" : "平稳";
+  const topIssue = highFrequencyExceptions.value[0]?.title || "未发现高频异常";
+
+  return [
+    { label: "风险等级", value: riskLevel },
+    { label: "关键事件", value: keyCount },
+    { label: "异常占比", value: total ? `${Math.round((keyCount / total) * 100)}%` : "0%" },
+    { label: "主要问题", value: topIssue },
+  ];
+});
+const highFrequencyExceptions = computed(() => {
+  const groups = new Map();
+
+  for (const entry of keyEntries.value) {
+    const title = normalizeIssueTitle(entry.message);
+    const current = groups.get(title) || {
+      title,
+      count: 0,
+      level: entry.level || "-",
+      firstLine: entry.line_number,
+      lastLine: entry.line_number,
+      sample: entry.message,
+    };
+
+    current.count += 1;
+    current.lastLine = entry.line_number;
+    if (rankLevel(entry.level) > rankLevel(current.level)) {
+      current.level = entry.level;
+    }
+    groups.set(title, current);
+  }
+
+  return Array.from(groups.values())
+    .sort((a, b) => b.count - a.count || rankLevel(b.level) - rankLevel(a.level))
+    .slice(0, 6);
+});
+const keyInformationGroups = computed(() => [
+  {
+    title: "涉及服务",
+    items: topExtractedValues(selectedEntries.value, extractServiceName),
+    empty: "未识别到服务名",
+  },
+  {
+    title: "请求链路",
+    items: topExtractedValues(selectedEntries.value, extractRequestId),
+    empty: "未识别到请求 ID",
+  },
+  {
+    title: "问题关键词",
+    items: topKeywordHits(keyEntries.value),
+    empty: "未识别到明显关键词",
+  },
+]);
+const keyEventTimeline = computed(() => keyEntries.value.slice(0, 8));
 
 async function requestApi(path, options = {}) {
   errorMessage.value = "";
@@ -290,6 +356,7 @@ async function analyzeLog(logId = selectedLogId.value) {
 
 function startPolling(logId) {
   stopPolling();
+  pollAnalysisStatus(logId);
   analysisPollTimer.value = setInterval(() => pollAnalysisStatus(logId), 2000);
 }
 
@@ -321,6 +388,11 @@ async function pollAnalysisStatus(logId) {
       analysisLoading.value = false;
       analysisStatus.value = "failed";
       errorMessage.value = data.error || "分析失败，请重试。";
+    } else if (data.status === "none") {
+      stopPolling();
+      analysisLoading.value = false;
+      analysisStatus.value = "";
+      errorMessage.value = "没有找到当前日志的分析任务，请重新点击分析。";
     }
   } catch {
     stopPolling();
@@ -465,6 +537,90 @@ function formatDate(value) {
 function splitItems(text) {
   if (!text) return [];
   return text.split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
+}
+
+function normalizeIssueTitle(message) {
+  return message
+    .replace(/\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g, "")
+    .replace(/\b(?:request[_-]?id|trace[_-]?id|rid|txid)[=:]\s*[\w.-]+/gi, "")
+    .replace(/\b[0-9a-f]{8,}\b/gi, "<id>")
+    .replace(/\b\d{2,}\b/g, "<n>")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120) || "未命名异常";
+}
+
+function rankLevel(level) {
+  const levelRanks = {
+    CRITICAL: 5,
+    FATAL: 5,
+    ERROR: 4,
+    WARN: 3,
+    WARNING: 3,
+    INFO: 2,
+    DEBUG: 1,
+    TRACE: 1,
+  };
+
+  return levelRanks[(level || "").toUpperCase()] || 0;
+}
+
+function topExtractedValues(entries, extractor) {
+  const counts = new Map();
+
+  for (const entry of entries) {
+    const value = extractor(entry.message);
+    if (!value) continue;
+    counts.set(value, (counts.get(value) || 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6);
+}
+
+function extractServiceName(message) {
+  const serviceMatch = message.match(/\b(?:service|module|component|logger|app)[=:]\s*([\w.-]+)/i);
+  if (serviceMatch) return serviceMatch[1];
+
+  const bracketMatch = message.match(/\[([a-z][\w.-]{2,})\]/i);
+  return bracketMatch ? bracketMatch[1] : "";
+}
+
+function extractRequestId(message) {
+  const match = message.match(/\b(?:request[_-]?id|trace[_-]?id|rid|txid)[=:]\s*([\w.-]+)/i);
+  return match ? match[1] : "";
+}
+
+function topKeywordHits(entries) {
+  const keywordMap = [
+    ["timeout", "请求超时"],
+    ["exception", "异常抛出"],
+    ["connection", "连接问题"],
+    ["database", "数据库"],
+    ["postgres", "PostgreSQL"],
+    ["redis", "Redis"],
+    ["cache", "缓存"],
+    ["memory", "内存"],
+    ["disk", "磁盘"],
+    ["unauthorized", "鉴权失败"],
+    ["5\\d{2}", "HTTP 5xx"],
+  ];
+  const counts = new Map();
+
+  for (const entry of entries) {
+    for (const [pattern, label] of keywordMap) {
+      if (new RegExp(pattern, "i").test(entry.message)) {
+        counts.set(label, (counts.get(label) || 0) + 1);
+      }
+    }
+  }
+
+  return Array.from(counts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6);
 }
 
 onMounted(async () => {
@@ -774,28 +930,87 @@ onMounted(async () => {
               </div>
             </dl>
 
-            <div v-if="analysisResult" class="analysis-cards">
+            <div v-if="selectedLog" class="troubleshooting-dashboard">
               <div class="section-heading compact-heading">
                 <div>
-                  <p class="eyebrow">Analyze</p>
-                  <h2>分析结果</h2>
+                  <p class="eyebrow">Diagnosis</p>
+                  <h2>排障面板</h2>
                 </div>
               </div>
-              <div class="analysis-card">
-                <h3>摘要</h3>
-                <p class="analysis-text">{{ analysisResult.summary }}</p>
-              </div>
-              <div class="analysis-card analysis-card-warn">
-                <h3>异常原因</h3>
-                <ul class="analysis-list">
-                  <li v-for="(item, i) in splitItems(analysisResult.causes)" :key="i">{{ item }}</li>
-                </ul>
-              </div>
-              <div class="analysis-card analysis-card-ok">
-                <h3>排障建议</h3>
-                <ul class="analysis-list">
-                  <li v-for="(item, i) in splitItems(analysisResult.suggestions)" :key="i">{{ item }}</li>
-                </ul>
+
+              <section class="diagnosis-metrics">
+                <div v-for="metric in diagnosisMetrics" :key="metric.label" class="diagnosis-metric">
+                  <span>{{ metric.label }}</span>
+                  <strong>{{ metric.value }}</strong>
+                </div>
+              </section>
+
+              <section class="dashboard-grid">
+                <div class="analysis-card">
+                  <h3>高频异常统计</h3>
+                  <div v-if="highFrequencyExceptions.length === 0" class="inline-empty">暂无 ERROR / WARN 事件</div>
+                  <ol v-else class="issue-list">
+                    <li v-for="issue in highFrequencyExceptions" :key="issue.title">
+                      <div>
+                        <strong>{{ issue.title }}</strong>
+                        <span>行 {{ issue.firstLine }} - {{ issue.lastLine }}</span>
+                      </div>
+                      <em>{{ issue.level }} · {{ issue.count }} 次</em>
+                    </li>
+                  </ol>
+                </div>
+
+                <div class="analysis-card">
+                  <h3>关键信息聚合</h3>
+                  <div class="info-groups">
+                    <section v-for="group in keyInformationGroups" :key="group.title">
+                      <h4>{{ group.title }}</h4>
+                      <div v-if="group.items.length === 0" class="inline-empty">{{ group.empty }}</div>
+                      <div v-else class="info-chips">
+                        <span v-for="item in group.items" :key="`${group.title}-${item.label}`">
+                          {{ item.label }} <em>{{ item.count }}</em>
+                        </span>
+                      </div>
+                    </section>
+                  </div>
+                </div>
+              </section>
+
+              <section class="analysis-card">
+                <h3>关键事件</h3>
+                <div v-if="keyEventTimeline.length === 0" class="inline-empty">暂无关键事件</div>
+                <div v-else class="event-timeline">
+                  <article v-for="entry in keyEventTimeline" :key="entry.id">
+                    <span class="tag">{{ entry.level || "-" }}</span>
+                    <div>
+                      <strong>第 {{ entry.line_number }} 行 · {{ entry.timestamp || "无时间戳" }}</strong>
+                      <p>{{ entry.message }}</p>
+                    </div>
+                  </article>
+                </div>
+              </section>
+
+              <section v-if="analysisResult" class="ai-result-grid">
+                <div class="analysis-card">
+                  <h3>AI 摘要</h3>
+                  <p class="analysis-text">{{ analysisResult.summary }}</p>
+                </div>
+                <div class="analysis-card analysis-card-warn">
+                  <h3>异常原因</h3>
+                  <ul class="analysis-list">
+                    <li v-for="(item, i) in splitItems(analysisResult.causes)" :key="i">{{ item }}</li>
+                  </ul>
+                </div>
+                <div class="analysis-card analysis-card-ok">
+                  <h3>排障建议</h3>
+                  <ul class="analysis-list">
+                    <li v-for="(item, i) in splitItems(analysisResult.suggestions)" :key="i">{{ item }}</li>
+                  </ul>
+                </div>
+              </section>
+              <div v-else class="analysis-card analysis-card-muted">
+                <h3>AI 分析</h3>
+                <p class="analysis-text">点击右上角「分析」后，这里会展示摘要、异常原因和排障建议。</p>
               </div>
             </div>
 
